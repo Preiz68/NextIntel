@@ -19,6 +19,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@types/graphlib": "^2.1.12",
     "@types/node": "^25.7.0",
     "tsup": "^8.5.1",
     "tsx": "^4.21.0",

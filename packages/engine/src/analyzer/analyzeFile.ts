@@ -50,7 +50,7 @@ function detectDirective(sourceFile: SourceFile): {
     return { isClient: false, isServer: true };
   }
 
-  return { isClient: false, isServer: false };
+  return { isClient: false, isServer: true };
 }
 
 // ─── Async component detection ────────────────────────────────────────────────
