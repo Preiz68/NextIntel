@@ -16,7 +16,7 @@ export const noHooksInServerComponents: Rule = {
           severity: "error",
           ruleId: "no-hooks-in-server-components",
           message: `File uses React hooks (${analysis.hooks.join(", ")}) but is a Server Component. Add "use client" at the top.`,
-          fix: `"use client";\n\n` + analysis.filePath,
+          fix: `"use client";`,
         });
       }
     }

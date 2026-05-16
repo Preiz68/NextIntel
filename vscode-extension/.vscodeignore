@@ -1,0 +1,29 @@
+# Source files - bundled into dist/
+src/**
+.vscode/**
+.vscode-test/**
+
+# Build tooling - not needed at runtime
+out/**
+node_modules/**
+esbuild.js
+.vscode-test.mjs
+
+# Config files
+.gitignore
+.yarnrc
+.npmrc
+**/tsconfig.json
+**/eslint.config.mjs
+eslint.config.mjs
+
+# Source maps (keep only in dev)
+**/*.map
+
+# TypeScript source
+**/*.ts
+!**/*.d.ts
+
+# Docs that aren't the main README
+vsc-extension-quickstart.md
+CHANGELOG.md

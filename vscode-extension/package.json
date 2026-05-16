@@ -1,0 +1,76 @@
+{
+  "name": "next-intel",
+  "displayName": "Next Intel",
+  "description": "NextIntel is a high-performance static analysis extension specifically architected for the Next.js App Router. It scans your codebase in real-time to ensure your application follows best practices for architecture, performance, and the React Server Components (RSC) paradigm.",
+  "version": "1.0.0",
+  "engines": {
+    "vscode": "^1.120.0"
+  },
+  "publisher": "nextintel",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Preiz68/next-intel"
+  },
+  "categories": [
+    "Linters",
+    "Testing",
+    "Programming Languages"
+  ],
+  "keywords": [
+    "nextjs",
+    "react",
+    "rsc",
+    "intelligence",
+    "static analysis"
+  ],
+  "activationEvents": [
+    "onLanguage:typescript",
+    "onLanguage:typescriptreact",
+    "onLanguage:javascript",
+    "onLanguage:javascriptreact"
+  ],
+  "main": "./dist/extension.js",
+  "galleryBanner": {
+    "color": "#0d1117",
+    "theme": "dark"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "next-intel.runAnalysis",
+        "title": "NextIntel: Run Analysis on Current File"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "pnpm run package",
+    "compile": "pnpm run check-types && pnpm run lint && node esbuild.js",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "package": "pnpm run check-types && pnpm run lint && node esbuild.js --production",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "pnpm run compile-tests && pnpm run compile && pnpm run lint",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "dependencies": {
+    "engine": "workspace:*",
+    "rules": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.120.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "typescript-eslint": "^8.56.1",
+    "eslint": "^9.39.3",
+    "esbuild": "^0.27.3",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^5.9.3",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2"
+  }
+}

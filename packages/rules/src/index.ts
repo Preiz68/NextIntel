@@ -6,6 +6,8 @@ import { noBrowserApiInServerComponents } from "./server-client/no-browser-api-i
 import { noClientImportServerOnly } from "./server-client/no-client-import-server-only.js";
 import { fetchCacheConfig } from "./caching/fetch-cache-config.js";
 import { noCircularDeps } from "./architecture/no-circular-deps.js";
+import { noUnoptimizedFetch } from "./performance/no-unoptimized-fetch.js";
+import { noBrowserGlobalsInClientRender } from "./hydration/no-browser-globals-in-client-render.js";
 
 export const rules = [
   noHooksInServerComponents,
@@ -13,4 +15,6 @@ export const rules = [
   noClientImportServerOnly,
   fetchCacheConfig,
   noCircularDeps,
+  noUnoptimizedFetch,
+  noBrowserGlobalsInClientRender,
 ];

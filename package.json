@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "analyze": "next-intel analyze",
+    "build": "pnpm -r build",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -26,6 +27,7 @@
   },
   "dependencies": {
     "commander": "^14.0.3",
-    "picocolors": "^1.1.1"
+    "picocolors": "^1.1.1",
+    "vscode": "^1.1.37"
   }
 }
