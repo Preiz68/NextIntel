@@ -207,6 +207,9 @@ importers:
 
   .:
     devDependencies:
+      tsx:
+        specifier: ^4.21.0
+        version: 4.21.0
       turbo:
         specifier: ^2.9.12
         version: 2.9.12
@@ -244,6 +247,31 @@ importers:
       tsx:
         specifier: ^4.21.0
         version: 4.21.0
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+
+  packages/rules:
+    dependencies:
+      engine:
+        specifier: workspace:*
+        version: link:../engine
+      graphlib:
+        specifier: ^2.1.8
+        version: 2.1.8
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@types/graphlib':
+        specifier: ^2.1.12
+        version: 2.1.12
+      '@types/node':
+        specifier: ^22.13.1
+        version: 22.19.19
+      tsup:
+        specifier: ^8.5.1
+        version: 8.5.1(tsx@4.21.0)(typescript@6.0.3)
       typescript:
         specifier: ^6.0.3
         version: 6.0.3
@@ -608,6 +636,9 @@ packages:
   '@types/graphlib@2.1.12':
     resolution: {integrity: sha512-abRfQWMphT2qlXwppQa+CTCtUz/GqxBeozQcMjnOFD/WOKD6sRgxkfG8vq1yagV03447BBzCYhuJ0wiNb+/r+Q==}
 
+  '@types/node@22.19.19':
+    resolution: {integrity: sha512-dyh/xO2Fh5bYrfWaaqGrRQQGkNdmYw6AmaAUvYeUMNTWQtvb796ikLdmTchRmOlOiIJ1TDXfWgVx1QkUlQ6Hew==}
+
   '@types/node@25.7.0':
     resolution: {integrity: sha512-z+pdZyxE+RTQE9AcboAZCb4otwcrvgHD+GlBpPgn0emDVt0ohrTMhAwlr2Wd9nZ+nihhYFxO2pThz3C5qSu2Eg==}
 
@@ -918,6 +949,9 @@ packages:
   ufo@1.6.4:
     resolution: {integrity: sha512-JFNbkD1Svwe0KvGi8GOeLcP4kAWQ609twvCdcHxq1oSL8svv39ZuSvajcD8B+5D0eL4+s1Is2D/O6KN3qcTeRA==}
 
+  undici-types@6.21.0:
+    resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
+
   undici-types@7.21.0:
     resolution: {integrity: sha512-w9IMgQrz4O0YN1LtB7K5P63vhlIOvC7opSmouCJ+ZywlPAlO9gIkJ+otk6LvGpAs2wg4econaCz3TvQ9xPoyuQ==}
 
@@ -1132,6 +1166,10 @@ snapshots:
   '@types/estree@1.0.8': {}
 
   '@types/graphlib@2.1.12': {}
+
+  '@types/node@22.19.19':
+    dependencies:
+      undici-types: 6.21.0
 
   '@types/node@25.7.0':
     dependencies:
@@ -1455,6 +1493,8 @@ snapshots:
   typescript@6.0.3: {}
 
   ufo@1.6.4: {}
+
+  undici-types@6.21.0: {}
 
   undici-types@7.21.0: {}
 

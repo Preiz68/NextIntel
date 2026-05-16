@@ -50,7 +50,6 @@ export const BROWSER_APIS = [
   "alert",
   "confirm",
   "prompt",
-  "fetch",
   "XMLHttpRequest",
   "WebSocket",
   "Worker",
@@ -61,10 +60,6 @@ export const BROWSER_APIS = [
   "MutationObserver",
   "requestAnimationFrame",
   "cancelAnimationFrame",
-  "setTimeout",
-  "setInterval",
-  "clearTimeout",
-  "clearInterval",
   "matchMedia",
   "getComputedStyle",
   "addEventListener",
@@ -72,10 +67,6 @@ export const BROWSER_APIS = [
   "dispatchEvent",
   "CustomEvent",
   "FileReader",
-  "URL",
-  "URLSearchParams",
-  "Blob",
-  "FormData",
 ] as const;
 
 export const BROWSER_GLOBALS = new Set(BROWSER_APIS);
