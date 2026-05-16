@@ -1,0 +1,28 @@
+{
+  "name": "next-intel",
+  "version": "1.0.0",
+  "description": "Next.js Intelligence Engine CLI",
+  "main": "dist/index.js",
+  "bin": {
+    "next-intel": "./bin/next-intel.js"
+  },
+  "files": [
+    "dist",
+    "bin"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "engine": "workspace:*",
+    "picocolors": "^1.1.1",
+    "rules": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^25.8.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.6.3"
+  }
+}
