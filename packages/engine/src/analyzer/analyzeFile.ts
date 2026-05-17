@@ -121,8 +121,13 @@ export async function analyzeFile(
     const scriptKind = resolveScriptKind(filePath);
 
     // Use addSourceFileAtPath so ts-morph handles reading from disk.
-    sourceFile =
-      project.getSourceFile(filePath) ?? project.addSourceFileAtPath(filePath);
+    const existingFile = project.getSourceFile(filePath);
+    if (existingFile) {
+      await existingFile.refreshFromFileSystem();
+      sourceFile = existingFile;
+    } else {
+      sourceFile = project.addSourceFileAtPath(filePath);
+    }
 
     // Re-add with explicit script kind if extension is ambiguous.
     if (!sourceFile) {
