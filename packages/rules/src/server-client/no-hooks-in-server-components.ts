@@ -10,14 +10,17 @@ export const noHooksInServerComponents: Rule = {
     const diagnostics: Diagnostic[] = [];
 
     for (const analysis of context.analyses) {
-      if (analysis.isServerComponent && analysis.hooks.length > 0) {
-        diagnostics.push({
-          file: analysis.filePath,
-          severity: "error",
-          ruleId: "no-hooks-in-server-components",
-          message: `File uses React hooks (${analysis.hooks.join(", ")}) but is a Server Component. Add "use client" at the top.`,
-          fix: `"use client";`,
-        });
+      if (analysis.isServerComponent && analysis.hookDetails.length > 0) {
+        for (const hook of analysis.hookDetails) {
+          diagnostics.push({
+            file: analysis.filePath,
+            severity: "error",
+            ruleId: "no-hooks-in-server-components",
+            message: `Hook '${hook.name}' is used but this is a Server Component. Add "use client" at the top.`,
+            fix: `"use client";`,
+            line: hook.line,
+          });
+        }
       }
     }
 

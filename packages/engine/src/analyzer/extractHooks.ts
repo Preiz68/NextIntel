@@ -5,7 +5,7 @@ import type { HookUsage } from "./types.js";
 const HOOK_PATTERN = /^use[A-Z]/;
 
 export function extractHooks(sourceFile: SourceFile): HookUsage[] {
-  const seen = new Map<string, HookUsage>();
+  const usages: HookUsage[] = [];
 
   sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression).forEach((call) => {
     const expr = call.getExpression();
@@ -24,14 +24,16 @@ export function extractHooks(sourceFile: SourceFile): HookUsage[] {
 
     if (!name || !HOOK_PATTERN.test(name)) return;
 
-    if (!seen.has(name)) {
-      seen.set(name, {
-        name,
-        isBuiltIn: ALL_BUILT_IN_HOOKS.has(name),
-        isCustomHook: !ALL_BUILT_IN_HOOKS.has(name),
-      });
-    }
+    // Calculate line number (1-indexed)
+    const line = call.getStartLineNumber();
+
+    usages.push({
+      name,
+      isBuiltIn: ALL_BUILT_IN_HOOKS.has(name),
+      isCustomHook: !ALL_BUILT_IN_HOOKS.has(name),
+      line,
+    });
   });
 
-  return [...seen.values()];
+  return usages;
 }

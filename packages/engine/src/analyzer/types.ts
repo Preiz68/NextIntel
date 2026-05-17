@@ -28,17 +28,20 @@ export interface FetchCall {
   hasRevalidate: boolean;
   revalidateValue: number | string | null;
   isDynamic: boolean;
+  line: number;
 }
 
 export interface HookUsage {
   name: string;
   isCustomHook: boolean;
   isBuiltIn: boolean;
+  line: number;
 }
 
 export interface BrowserAPIUsage {
   api: string;
   count: number;
+  line: number;
 }
 
 export interface FileAnalysis {

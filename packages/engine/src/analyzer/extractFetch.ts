@@ -82,9 +82,13 @@ export function extractFetchCalls(sourceFile: SourceFile): FetchCall[] {
 
     const args = call.getArguments();
     const optionsArg = args[1];
+    const line = call.getStartLineNumber();
 
     if (optionsArg && Node.isObjectLiteralExpression(optionsArg)) {
-      results.push(analyzeOptionsObject(optionsArg));
+      results.push({
+        ...analyzeOptionsObject(optionsArg),
+        line,
+      });
     } else {
       // fetch(url) with no options — Next.js defaults to force-cache in App Router
       results.push({
@@ -93,6 +97,7 @@ export function extractFetchCalls(sourceFile: SourceFile): FetchCall[] {
         hasRevalidate: false,
         revalidateValue: null,
         isDynamic: false,
+        line,
       });
     }
   });

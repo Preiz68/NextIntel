@@ -18,6 +18,7 @@ export const fetchCacheConfig: Rule = {
             ruleId: "fetch-cache-config",
             message: "Implicit fetch caching detected. Consider adding explicit { cache: '...' } or { next: { revalidate: ... } }.",
             fix: "{ cache: 'no-store' }",
+            line: fetchCall.line,
           });
         }
       }

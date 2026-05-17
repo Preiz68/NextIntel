@@ -23,6 +23,7 @@ export const noBrowserGlobalsInClientRender: Rule = {
           message: `Browser API '${apiUsage.api}' used in Client Component. To avoid hydration mismatches, move it to useEffect or an event handler.`,
           severity: "warning",
           file: analysis.filePath,
+          line: apiUsage.line,
         });
       }
     }

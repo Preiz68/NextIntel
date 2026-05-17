@@ -25,6 +25,7 @@ export const noUnoptimizedFetch: Rule = {
             message: `Unoptimized fetch detected. In Server Components, consider adding { cache: 'force-cache' } or { next: { revalidate: ... } } for better performance.`,
             severity: "warning",
             file: analysis.filePath,
+            line: f.line,
           });
         }
       }

@@ -3,7 +3,7 @@ import { BROWSER_GLOBALS } from "./constants.js";
 import type { BrowserAPIUsage } from "./types.js";
 
 export function extractBrowserAPIs(sourceFile: SourceFile): BrowserAPIUsage[] {
-  const counts = new Map<string, number>();
+  const usages: BrowserAPIUsage[] = [];
 
   sourceFile.getDescendantsOfKind(SyntaxKind.Identifier).forEach((id) => {
     const name = id.getText();
@@ -79,8 +79,15 @@ export function extractBrowserAPIs(sourceFile: SourceFile): BrowserAPIUsage[] {
       }
     }
 
-    counts.set(name, (counts.get(name) ?? 0) + 1);
+    // Get 1-based line number where the browser API identifier is used
+    const line = id.getStartLineNumber();
+
+    usages.push({
+      api: name,
+      count: 1,
+      line,
+    });
   });
 
-  return [...counts.entries()].map(([api, count]) => ({ api, count }));
+  return usages;
 }
