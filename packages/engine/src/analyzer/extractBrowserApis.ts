@@ -87,10 +87,7 @@ export function extractBrowserAPIs(sourceFile: SourceFile): BrowserAPIUsage[] {
     ) {
       return;
     }
-    if (
-      parent.isKind(SyntaxKind.Parameter) &&
-      parent.getNameNode() === id
-    ) {
+    if (parent.isKind(SyntaxKind.Parameter) && parent.getNameNode() === id) {
       return;
     }
     if (
@@ -113,7 +110,9 @@ export function extractBrowserAPIs(sourceFile: SourceFile): BrowserAPIUsage[] {
         // Global environment types (lib.dom.d.ts) contain 'typescript/lib'
         // External packages contain 'node_modules'
         // If it is NOT in those, it belongs to the user's workspace source code.
-        const isLib = declPath.includes("typescript/lib") || declPath.includes("node_modules");
+        const isLib =
+          declPath.includes("typescript/lib") ||
+          declPath.includes("node_modules");
         return !isLib;
       });
 
