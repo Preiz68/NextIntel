@@ -1,0 +1,129 @@
+{
+  "concept": "Security",
+  "category": "security",
+  "description": "Security in Next.js involves managing server-side execution boundaries, protecting sensitive data, and ensuring environment variables are securely isolated. Because Next.js blends client and server compilation, distinguishing between public-facing inputs and server-only modules is critical.",
+  "constraints": [
+    {
+      "id": "SE-001",
+      "title": "Do Not Expose Private Secrets in NEXT_PUBLIC Environment Variables",
+      "problem": "Prefixing API keys, private credentials, or database connection strings with the NEXT_PUBLIC_ identifier compiles them directly into the public JavaScript bundle, exposing them to anyone in the browser.",
+      "whyItMatters": "Environment variables prefixed with `NEXT_PUBLIC_` are inline-replaced in the browser build. If you store sensitive credentials (e.g. database credentials or Stripe private keys) in them, attackers can easily extract them from public JS resources, leading to severe data breaches.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "NEXT_PUBLIC_STRIPE_SECRET_KEY in any configuration file or code block",
+        "NEXT_PUBLIC_DATABASE_URL in public files"
+      ],
+      "allowedPatterns": [
+        "Keeping private keys inside undecorated variables (e.g. STRIPE_SECRET_KEY) accessed strictly from Server Components",
+        "Using NEXT_PUBLIC_ only for generic non-sensitive configurations (e.g. NEXT_PUBLIC_API_URL)"
+      ],
+      "productionRisks": [
+        "Critical leak of production databases and payment gateway credentials",
+        "Unauthorized access to backend service resources",
+        "Compliance violation (PCI, GDPR) resulting in audits and penalties"
+      ],
+      "architectureImplications": [
+        "Requires securing environment variables in host environments (e.g. Vercel, AWS)",
+        "Demands strict server/client code isolation"
+      ],
+      "optimizationGuidance": [
+        "Verify all variables prefixed with NEXT_PUBLIC_ do not contain secret credentials before deploying"
+      ],
+      "quickFixes": [
+        "Remove the NEXT_PUBLIC_ prefix, and ensure the variable is only accessed within Server Component code paths"
+      ],
+      "architectureSuggestions": [
+        "Utilize server-only packages ('import 'server-only'') to ensure credentials or connection routines cannot compile into client bundles"
+      ],
+      "examples": {
+        "invalid": [
+          "// In .env: NEXT_PUBLIC_DB_PASS=admin123"
+        ],
+        "valid": [
+          "// In .env: DB_PASS=admin123"
+        ]
+      }
+    },
+    {
+      "id": "SE-002",
+      "title": "Always Validate and Authorize Inputs Inside Server Actions",
+      "problem": "Treating Server Actions as safe 'internal' functions and omitting session, authentication, or input schema validation allows malicious users to directly invoke backend execution flows with arbitrary inputs.",
+      "whyItMatters": "Next.js compiles every Server Action into a public HTTP POST endpoint. A malicious actor can easily capture the POST payload and replay it with modified values (such as passing a different user's ID or injecting unsafe HTML). You must always authorize the user session and validate the input parameters (using libraries like Zod) inside the action body.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "Executing database writes or user profile updates inside Server Actions without checking session details or performing authorization checks",
+        "Directly trusting input parameters (e.g. db.updateItem(params.itemId, params.data)) without structural validation"
+      ],
+      "allowedPatterns": [
+        "Retrieving the authenticated user session (using auth() or cookies()) inside the Server Action and verifying record ownership before writing",
+        "Validating all action inputs using schemas: const validatedData = schema.parse(data)"
+      ],
+      "productionRisks": [
+        "Broken Object Level Authorization (BOLA), enabling users to edit or delete other users' records",
+        "SQL injection or arbitrary database writes from unvalidated client inputs",
+        "Unauthenticated execution of privileged administrative actions"
+      ],
+      "architectureImplications": [
+        "Forces Server Actions to act as secure API gateways rather than transparent RPC helpers",
+        "Promotes schema validation as the entrypoint for all data mutations"
+      ],
+      "optimizationGuidance": [
+        "Integrate a shared authorization wrapper or utility to consistently enforce permission scopes across all Server Actions"
+      ],
+      "quickFixes": [
+        "Add a session check using cookies/auth at the top of the Server Action, and validate the input object using a Zod schema"
+      ],
+      "architectureSuggestions": [
+        "Build secure, reusable action wrappers that automatically authenticate, authorize, and validate payloads using Zod schemas before running business logic"
+      ],
+      "examples": {
+        "invalid": [
+          "export async function deletePost(postId: string) { await db.deletePost(postId); }"
+        ],
+        "valid": [
+          "import { auth } from '@/lib/auth'; import { z } from 'z'; const schema = z.string().uuid(); export async function deletePost(postId: string) { const session = await auth(); if (!session) throw new Error('Unauthenticated'); const validatedId = schema.parse(postId); const post = await db.getPost(validatedId); if (post.userId !== session.user.id) throw new Error('Unauthorized'); await db.deletePost(validatedId); }"
+        ]
+      }
+    },
+    {
+      "id": "SE-003",
+      "title": "Escape HTML to Prevent Cross-Site Scripting (XSS) in dangerouslySetInnerHTML",
+      "problem": "Rendering un-sanitized user-generated content or markdown strings directly using React's dangerouslySetInnerHTML attribute allows attackers to inject malicious scripts into server-rendered pages.",
+      "whyItMatters": "While React automatically escapes variables in JSX to protect against XSS, using `dangerouslySetInnerHTML` bypasses this safety layer. If the input source is user-generated (e.g. blog comments, forum posts) and you don't parse/sanitize the string first (using libraries like DOMPurify or isomorphic-dompurify on the server), users will load and execute malicious scripts, resulting in cookies theft or session hijacking.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "dangerouslySetInnerHTML={{ __html: userPost.content }} without sanitization libraries"
+      ],
+      "allowedPatterns": [
+        "Sanitizing user inputs with DOMPurify before inserting them: dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(content) }}",
+        "Using standard safe JSX string rendering for text blocks"
+      ],
+      "productionRisks": [
+        "Cross-Site Scripting (XSS) executions stealing user authentication tokens",
+        "Defacement of production web application page interfaces",
+        "Malicious redirects or CSRF attacks executed in the browser context"
+      ],
+      "architectureImplications": [
+        "Mandates integrating secure parsing/sanitization filters inside rendering components",
+        "Forces treating all external dynamic datasets as highly untrusted inputs"
+      ],
+      "optimizationGuidance": [
+        "Prefer using standard markdown-to-jsx parsers that automatically strip dangerous HTML tags over direct un-sanitized raw rendering"
+      ],
+      "quickFixes": [
+        "Pass the HTML content through a sanitization library like isomorphic-dompurify before setting the __html property"
+      ],
+      "architectureSuggestions": [
+        "Centralize all markup rendering into a single, hardened dynamic sanitization component that forces strict sanitize layers before emitting React outputs"
+      ],
+      "examples": {
+        "invalid": [
+          "export default function Post({ html }) { return <div dangerouslySetInnerHTML={{ __html: html }} />; }"
+        ],
+        "valid": [
+          "import DOMPurify from 'isomorphic-dompurify'; export default function Post({ html }) { const safeHtml = DOMPurify.sanitize(html); return <div dangerouslySetInnerHTML={{ __html: safeHtml }} />; }"
+        ]
+      }
+    }
+  ]
+}

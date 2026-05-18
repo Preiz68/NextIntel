@@ -1,0 +1,126 @@
+{
+  "concept": "Error Boundaries",
+  "category": "architecture",
+  "description": "Error boundaries in the App Router are implemented using error.tsx files, which act as React Error Boundaries to catch uncaught runtime exceptions in nested layouts or pages. Defining an error boundary ensures your application can recover gracefully and display fallback UIs to users without crashing the entire route layout.",
+  "constraints": [
+    {
+      "id": "EB-001",
+      "title": "Error Components Must Be Client Components",
+      "problem": "Creating an error.tsx component without the 'use client' directive triggers build-time compilation errors.",
+      "whyItMatters": "Error boundaries must catch runtime exceptions and expose recovery mechanisms (like a reset() callback), which requires client-side React lifecycle hooks and event handlers. Therefore, Next.js strictly requires all error.tsx files to be designated as Client Components.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "export default function Error() {} without the 'use client' directive at the top of error.tsx"
+      ],
+      "allowedPatterns": [
+        "Adding 'use client' as the first line of all error.tsx or error.jsx components"
+      ],
+      "productionRisks": [
+        "Build failures when deploying layout files to production",
+        "Complete layout crashing if a sub-layout throws without a valid client boundary"
+      ],
+      "architectureImplications": [
+        "Enforces separating client fallback recovery logic from server-side rendering logic",
+        "Encourages nested, localized layouts rather than global error boundaries"
+      ],
+      "optimizationGuidance": [
+        "Ensure error components provide actionable recovery steps (like re-triggering dynamic renders using reset())"
+      ],
+      "quickFixes": [
+        "Add the 'use client' directive to the top of your error.tsx file"
+      ],
+      "architectureSuggestions": [
+        "Nest error.tsx components locally in high-risk route directories rather than relying only on a root app/error.tsx boundary"
+      ],
+      "examples": {
+        "invalid": [
+          "export default function Error({ error }: { error: Error }) { return <div>Error: {error.message}</div>; }"
+        ],
+        "valid": [
+          "'use client'; export default function Error({ error, reset }: { error: Error; reset: () => void }) { return <div><h2>Error: {error.message}</h2><button onClick={reset}>Try again</button></div>; }"
+        ]
+      }
+    },
+    {
+      "id": "EB-002",
+      "title": "Understand That error.tsx Cannot Catch Errors in the Same Level layout.tsx",
+      "problem": "Placing error.tsx in a route directory expecting it to catch exceptions thrown by layout.tsx inside the same folder will fail, as the layout wraps the error boundary component.",
+      "whyItMatters": "In the React render hierarchy, the parent directory layout wraps the children pages and error boundaries. If an exception occurs during the render phase of a layout, the error boundary nested inside that layout cannot catch it. To handle errors thrown inside layout.tsx, the error.tsx file must live in the parent directory, or you must use global-error.tsx at the app root level.",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "Assuming a sibling error.tsx will render when its sibling layout.tsx throws a runtime rendering exception"
+      ],
+      "allowedPatterns": [
+        "Placing error.tsx in the parent route folder to cover child layout exceptions",
+        "Declaring a global-error.tsx file in the app root to catch errors thrown in root-layout.tsx"
+      ],
+      "productionRisks": [
+        "Uncaught server exceptions breaking page rendering completely",
+        "White-screen crashes seen by users with no visible recovery fallback",
+        "Loss of error tracking metrics since Sentry/OTel cannot catch layout exceptions without parent boundaries"
+      ],
+      "architectureImplications": [
+        "Forces structuring layouts so they are robust and error-free, deferring dynamic or high-risk data-fetching down to pages or components",
+        "Dictates root layout error management through dedicated global-error.tsx wrappers"
+      ],
+      "optimizationGuidance": [
+        "Implement a global-error.tsx file to protect your application from root layout, shell navigation, or header crashes"
+      ],
+      "quickFixes": [
+        "Move the error.tsx file to the parent folder level to wrap the current directory's layout, or create a global-error.tsx file"
+      ],
+      "architectureSuggestions": [
+        "Design root layouts to be lightweight, pure, and dynamic-free, shifting any intensive or database-driven operations to dynamic children segments where error.tsx handles exceptions cleanly"
+      ],
+      "examples": {
+        "invalid": [
+          "// Inside app/dashboard/layout.tsx with an error-prone dynamic import, relying strictly on app/dashboard/error.tsx to catch it"
+        ],
+        "valid": [
+          "// Inside app/global-error.tsx to cover errors occurring inside the main layout.tsx rendering loop"
+        ]
+      }
+    },
+    {
+      "id": "EB-003",
+      "title": "Do Not Use Raw error.message Inside Production UI Without Sanitization",
+      "problem": "Exposing raw `error.message` or execution stack traces directly inside production error UI leaks internal system details, database schemas, or database passwords to users.",
+      "whyItMatters": "During production builds, Next.js deliberately obfuscates server-side rendering exception messages and replaces them with a generic error code (e.g. 'An error occurred on the server...') to prevent server secrets leaking. Exposing raw server trace properties inside error boundaries in development is fine, but in production, you must only display generic messages and log raw errors to external telemetry systems.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "Displaying error.stack directly inside the render return block",
+        "Relying solely on error.message to inform users of dynamic server-side db connection failures in production"
+      ],
+      "allowedPatterns": [
+        "Displaying a generic localized message (e.g., 'Something went wrong') while logging the actual error structure to third-party collectors (Sentry, Datadog) inside useEffect hooks",
+        "Checking if process.env.NODE_ENV === 'development' before exposing details"
+      ],
+      "productionRisks": [
+        "Leaking database connection variables, internal SQL queries, or filesystem paths to end users",
+        "Exposing system vulnerabilities to malicious actors looking at stack traces",
+        "Compliance (GDPR, SOC2) violations regarding data protection and security audits"
+      ],
+      "architectureImplications": [
+        "Mandates integrating secure logging handlers into error.tsx layout boundaries",
+        "Forces separating system-level debug tracing from user-friendly fallback components"
+      ],
+      "optimizationGuidance": [
+        "Always log error details asynchronously in the background from a client useEffect loop inside the error handler"
+      ],
+      "quickFixes": [
+        "Replace direct error.message rendering in layout with a safe fallback: {process.env.NODE_ENV === 'development' ? error.message : 'A system error occurred. Please try again.'}"
+      ],
+      "architectureSuggestions": [
+        "Integrate automated Sentry wrappers: export a standard ErrorBoundary component that automatically captures, sanitizes, and streams error footprints behind a friendly recovery UI"
+      ],
+      "examples": {
+        "invalid": [
+          "'use client'; export default function Error({ error }: { error: Error }) { return <pre>{error.stack}</pre>; }"
+        ],
+        "valid": [
+          "'use client'; import { useEffect } from 'react'; export default function Error({ error }: { error: Error }) { useEffect(() => { console.error('Logged telemetry:', error); }, [error]); return <div><h3>Unable to load resource</h3><p>An unexpected error occurred. Our engineering team has been notified.</p></div>; }"
+        ]
+      }
+    }
+  ]
+}

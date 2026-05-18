@@ -1,0 +1,127 @@
+{
+  "concept": "Bundling",
+  "category": "performance",
+  "description": "Bundling in Next.js optimizes code chunks using Turbopack or Webpack to reduce client-side JavaScript payloads. Since Server Components only execute on the server, their imports are excluded from the client bundles. Careful placement of Client Component boundaries is critical to prevent code bloat.",
+  "constraints": [
+    {
+      "id": "BD-001",
+      "title": "Keep Heavy Third-party Packages Out of Client Components",
+      "problem": "Importing large utilities (e.g. lodash, moment, validator) inside Client Components increases browser JavaScript bundle size and slows down LCP and TBT.",
+      "whyItMatters": "Any module imported in a Client Component is bundled and sent to the browser. By contrast, if the same module is imported in a Server Component, it executes solely on the server and is completely tree-shaken out of the client bundle. Placing large packages on the wrong side of the server/client boundary degrades performance.",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "import lodash from 'lodash' directly inside Client Components without dynamic imports",
+        "Importing heavy markdown parsers or syntax highlighters at the root of a Client Component"
+      ],
+      "allowedPatterns": [
+        "Importing large libraries in Server Components and passing parsed data to Client Components as simple props",
+        "Using next/dynamic to lazy-load client-side components with heavy dependencies"
+      ],
+      "productionRisks": [
+        "Significantly inflated browser JavaScript bundle sizes",
+        "Poor Core Web Vitals (high Interaction to Next Paint (INP) and Time to Interactive)",
+        "Degraded mobile device performance due to heavy script parsing"
+      ],
+      "architectureImplications": [
+        "Requires isolating heavy compute/formatting operations to Server Components",
+        "Pushes boundary optimization towards prop-based leaf nodes"
+      ],
+      "optimizationGuidance": [
+        "Always inspect bundle sizes using next-bundle-analyzer or Turbopack output to locate dependency leaks"
+      ],
+      "quickFixes": [
+        "Move the library import to a Server Component, or wrap the component in next/dynamic with { ssr: false }"
+      ],
+      "architectureSuggestions": [
+        "Perform rich formatting, transformations, and date computations inside Server Components, feeding Client Components only clean, flat primitive props"
+      ],
+      "examples": {
+        "invalid": [
+          "'use client'; import moment from 'moment'; export default function DateBadge({ date }) { return <span>{moment(date).format('LL')}</span>; }"
+        ],
+        "valid": [
+          "// in page.tsx: import moment from 'moment'; export default function Page() { return <DateBadge formattedDate={moment().format('LL')} />; } // in DateBadge.tsx ('use client'): export default function DateBadge({ formattedDate }) { return <span>{formattedDate}</span>; }"
+        ]
+      }
+    },
+    {
+      "id": "BD-002",
+      "title": "Use server-only to Prevent Build-time Leaking of Server Code",
+      "problem": "Accidentally importing server-side database modules or utilities inside Client Components allows backend modules to compile into client-side JS bundles.",
+      "whyItMatters": "If backend configuration files or database connections are mistakenly imported in Client Components, Next.js packages them into client bundles. This causes compilation errors (since Node modules like fs are missing in browser) or, worse, leaks sensitive code logic to the client. The 'server-only' package acts as a build-time guard rail that throws errors if any server module enters the client tree.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "Importing database initialization or secret validation methods inside files decorated with 'use client' without boundary protection"
+      ],
+      "allowedPatterns": [
+        "Adding 'import \"server-only\";' at the top of all database connection, API handler, or utility files to ensure they can only compile inside Server Components"
+      ],
+      "productionRisks": [
+        "Exposure of proprietary backend algorithm logic in browser bundles",
+        "Accidental leak of environment variable configurations or connection settings",
+        "Build crashes due to missing clientside equivalents of standard server libraries"
+      ],
+      "architectureImplications": [
+        "Creates a concrete compile-time wall between server-only logic and shared/client components",
+        "Secures database connection libraries from client inclusion"
+      ],
+      "optimizationGuidance": [
+        "Add the 'server-only' package import to all custom data access layer (DAL) files to establish strict build-time security guards"
+      ],
+      "quickFixes": [
+        "Install the server-only package and add import 'server-only'; to the top of your backend utility files"
+      ],
+      "architectureSuggestions": [
+        "Maintain strict folder separation (e.g. lib/server/ vs lib/client/) and use 'server-only' and 'client-only' packages to guarantee build compilation integrity"
+      ],
+      "examples": {
+        "invalid": [
+          "// Inside lib/db.ts: export const db = new DatabaseConnection(); // Imported directly inside a 'use client' component file"
+        ],
+        "valid": [
+          "// Inside lib/db.ts: import 'server-only'; export const db = new DatabaseConnection(); // Any attempt to import this inside a Client Component fails the build immediately"
+        ]
+      }
+    },
+    {
+      "id": "BD-003",
+      "title": "Avoid Dynamic Barrel File Imports in Client Components to Prevent Tree-shaking Failure",
+      "problem": "Importing components from a centralized 'barrel file' (index.ts) that consolidates dozens of unrelated modules forces the bundler to include every module in the client package.",
+      "whyItMatters": "While barrel files (`index.ts`) provide neat, single-line import convenience, they are notorious for defeating tree-shaking optimizations inside Client Components. If a Client Component imports a tiny loader but imports it from an index file containing large packages or Server Components, Webpack/Turbopack often pulls in the *entire consolidated dependency graph*, swelling the clientside JS bundle instantly.",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "Importing a lightweight module from a massive shared root packages/components/index.ts barrel file directly inside Client Components"
+      ],
+      "allowedPatterns": [
+        "Importing components directly from their specific individual file path (e.g. import Button from '@/components/Button/Button')",
+        "Enabling strict sideEffects: false configs in package.json to guide the compiler's tree-shaking algorithms"
+      ],
+      "productionRisks": [
+        "Vastly inflated client bundle sizes (e.g. 500KB+ added for simple icons)",
+        "Poor TBT (Total Blocking Time) and FCP scores as the browser processes dead code script structures",
+        "Build timeouts due to massive circular dependency graphs triggered by barrels"
+      ],
+      "architectureImplications": [
+        "Requires shifting to explicit file-based imports inside client modules",
+        "Enforces clean, separated component boundaries at folder levels"
+      ],
+      "optimizationGuidance": [
+        "Configure ESLint rules (like no-restricted-imports) to actively prevent importing from index/barrel configurations inside client contexts"
+      ],
+      "quickFixes": [
+        "Change the barrel import to a direct file reference, e.g. import { Item } from '@/components' to import Item from '@/components/Item'"
+      ],
+      "architectureSuggestions": [
+        "Structure UI directories with strict isolation, keeping component barrel consolidations restricted only to highly coupled internal packages or layout contexts"
+      ],
+      "examples": {
+        "invalid": [
+          "'use client'; import { LightWidget } from '@/components'; // components/index.ts also imports HeavyChart, MapPanel, and RichEditor"
+        ],
+        "valid": [
+          "'use client'; import LightWidget from '@/components/LightWidget'; // Bypasses index.ts completely, only LightWidget is bundled"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,127 @@
+{
+  "concept": "Routing",
+  "category": "routing",
+  "description": "Routing in the App Router is file-system based, using folders to define paths and special files (like page.tsx, layout.tsx, template.tsx, route.ts) to define UI. Routes run inside a Server Component context by default, preserving layouts and minimizing component re-renders when navigating between nested dynamic paths.",
+  "constraints": [
+    {
+      "id": "RO-001",
+      "title": "Use Only Valid App Router Files Inside Route Segments",
+      "problem": "Placing utility files, test files, or components directly in dynamic routing directories can confuse the bundler or cause route resolution errors if named incorrectly.",
+      "whyItMatters": "Next.js enforces strict routing rules. Any folder containing a `route.ts` or `page.tsx` defines an addressable route. Exposing other files in these folders can accidentally expose internal routes if they match the framework pattern, or lead to deployment bundling inflation.",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "Placing internal components directly inside route folders without prefixing them with an underscore or keeping them in separate components folder",
+        "Co-locating route.ts and page.tsx inside the exact same routing folder segment"
+      ],
+      "allowedPatterns": [
+        "Storing non-routing components inside a localized components/ directory outside the app/ directory",
+        "Using private folders prefixed with an underscore (_components) inside route directories to bypass routing"
+      ],
+      "productionRisks": [
+        "Conflicting route resolutions resulting in 404 or 500 errors",
+        "Exposure of internal utility functions as public API endpoints",
+        "Increased bundler payload from unorganized routing files"
+      ],
+      "architectureImplications": [
+        "Requires isolating domain components from folder routing structures",
+        "Promotes clean component-folder boundaries"
+      ],
+      "optimizationGuidance": [
+        "Use private folder naming conventions (_folder) to organize tests or mocks within the route structure safely"
+      ],
+      "quickFixes": [
+        "Move nested component files to an external components/ folder, or rename the local folder prefix to an underscore (_components)"
+      ],
+      "architectureSuggestions": [
+        "Keep the app/ folder lightweight, holding only routing folders and route-specific layouts/pages, while keeping structural components elsewhere"
+      ],
+      "examples": {
+        "invalid": [
+          "// Inside app/dashboard/layout.tsx and app/dashboard/route.ts in the same folder segment"
+        ],
+        "valid": [
+          "// Inside app/dashboard/page.tsx, with API actions separated to app/api/dashboard/route.ts"
+        ]
+      }
+    },
+    {
+      "id": "RO-002",
+      "title": "Prevent Co-location of Route Handlers and Pages in Same Segment",
+      "problem": "Creating a route.ts (or route.js) and a page.tsx (or page.js) inside the exact same directory will crash the compiler or cause route mismatches during execution.",
+      "whyItMatters": "Next.js App Router treats route.ts files as raw HTTP dynamic endpoints (handling GET, POST, DELETE, etc.) and page.tsx files as component rendering targets. If both exist in the same route folder, Next.js cannot determine whether to render HTML or serve JSON. It will throw a compilation error or ignore one of them entirely.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "Creating app/api/items/page.tsx and app/api/items/route.ts together inside the items/ directory"
+      ],
+      "allowedPatterns": [
+        "Moving route handlers into a separate app/api/ directory mapping",
+        "Keeping only page.tsx inside the user-facing app/ route folders"
+      ],
+      "productionRisks": [
+        "Build compilation failures blocking deployments",
+        "Server routing crashing during dynamic API requests",
+        "Total loss of page or API route access in production environments"
+      ],
+      "architectureImplications": [
+        "Forces separating front-end rendering routing from back-end API route controllers",
+        "Enforces architectural purity in directory layout mappings"
+      ],
+      "optimizationGuidance": [
+        "Isolate all JSON/HTTP API endpoints to a dedicated app/api/ subfolder to keep routes clear and robust"
+      ],
+      "quickFixes": [
+        "Move the route.ts file out of the page.tsx folder, typically into a dedicated app/api/... segment"
+      ],
+      "architectureSuggestions": [
+        "Use Server Actions inside pages/components for mutations instead of route handlers, completely eliminating the need for co-located route.ts API endpoints"
+      ],
+      "examples": {
+        "invalid": [
+          "// app/products/page.tsx and app/products/route.ts inside the same folder"
+        ],
+        "valid": [
+          "// app/products/page.tsx for user UI, app/api/products/route.ts for raw data REST operations"
+        ]
+      }
+    },
+    {
+      "id": "RO-003",
+      "title": "Always Define default.tsx in Parallel Routes to Prevent 404 Navigation Failures",
+      "problem": "Omitting a default.tsx (or default.jsx) fallback file inside Parallel Route slots (@slot) will cause 404 errors during clientside page reload or navigation.",
+      "whyItMatters": "During client-side navigation, Next.js keeps track of currently rendered parallel slots. However, on a full browser page refresh (reload), Next.js cannot retrieve the previous slot state. If it cannot find a corresponding `default.tsx` file for that parallel route slot at the current sub-URL, it immediately crashes and serves a 404. Defining a default fallback layout is mandatory to ensure navigation robustness.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "Defining parallel slots (e.g. @analytics) under layout folders without providing a sibling default.tsx file"
+      ],
+      "allowedPatterns": [
+        "Creating a default.tsx inside every parallel slot directory returning a fallback layout or null: export default function Default() { return null; }"
+      ],
+      "productionRisks": [
+        "Users experiencing unexpected 404 page crashes on reload",
+        "Incomplete routing state transitions during deep link share clicks",
+        "Critical dashboard layouts failing to load under specific client-side navigations"
+      ],
+      "architectureImplications": [
+        "Mandates structuring parallel slots as self-contained state fallbacks",
+        "Enforces robust fallback definition boundaries across dynamic layout folders"
+      ],
+      "optimizationGuidance": [
+        "Ensure default.tsx returns a matching shell component or null to safely bridge hydration transitions during full page reloads"
+      ],
+      "quickFixes": [
+        "Create a default.tsx file in your parallel slot directory that returns null or a matching structural loader component"
+      ],
+      "architectureSuggestions": [
+        "Build parallel route slots with complete layout boundaries (holding layout, page, and default files) to ensure seamless independent rendering capability"
+      ],
+      "examples": {
+        "invalid": [
+          "// app/dashboard/layout.tsx consumes @analytics and @team, but app/dashboard/@analytics has a page.tsx with no default.tsx"
+        ],
+        "valid": [
+          "// app/dashboard/@analytics/default.tsx: export default function Default() { return <div>analytics loading fallback</div>; }"
+        ]
+      }
+    }
+  ]
+}

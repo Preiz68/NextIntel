@@ -1,0 +1,133 @@
+{
+  "concept": "Streaming",
+  "category": "rendering",
+  "description": "Streaming is Next.js's ability to break down a page's HTML into smaller chunks and progressively send them from the server to the client. Powered by React Suspense, streaming allows dynamic parts of a page (like slow database queries) to be suspended while static UI (like headers or skeletons) is sent immediately, improving perceived performance, TTFB, and FCP. In the Next.js App Router, streaming is enabled automatically and can be customized with granular loading.tsx layouts or explicit Suspense boundaries.",
+  "constraints": [
+    {
+      "id": "ST-001",
+      "title": "Wrap Slow Async Server Components in Suspense Boundaries",
+      "problem": "Dynamic pages that block the entire document request waiting for dynamic database or API fetches will have high TTFB (Time to First Byte) unless dynamic elements are wrapped in Suspense boundaries.",
+      "whyItMatters": "Without Suspense, Next.js must wait for all asynchronous server component fetches on a page to complete before starting to stream the HTML document response. Wrapping dynamic components in Suspense enables progressive streaming, where static shells are delivered in milliseconds and dynamic parts fill in as data resolves.",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "Unwrapped async server components directly on the page root",
+        "Await-blocking multiple non-dependent fetches at page level without Promise.all or Suspense",
+        "Using await fetch() in root layout that delays initial document rendering"
+      ],
+      "allowedPatterns": [
+        "Wrapping individual slow async server components in <Suspense fallback={<Skeleton />}>",
+        "Grouping multi-component dashboards into layout sections nested in individual Suspense boundaries",
+        "Using parallel data loading with Promise.all() before rendering components"
+      ],
+      "productionRisks": [
+        "Highly degraded Time to First Byte (TTFB)",
+        "Degraded First Contentful Paint (FCP) and user bounce rates",
+        "Blank white screen during initial page delivery"
+      ],
+      "architectureImplications": [
+        "Requires shifting loading states from a page-level load state to component-level grain Suspense boundaries",
+        "Promotes isolated data-fetching paradigms per component rather than centralized page data resolution"
+      ],
+      "optimizationGuidance": [
+        "Avoid page-level await blocks for secondary or non-critical path data",
+        "Leverage instant loading states (loading.tsx) as a default layout-wide Suspense boundary fallback"
+      ],
+      "quickFixes": [
+        "Wrap the dynamic component in a standard React <Suspense> with a visually matching skeleton fallback"
+      ],
+      "architectureSuggestions": [
+        "Adopt a shell-and-grain design: structural UI (nav, headers) is static, while content nodes load independently with granular Suspense fallbacks"
+      ],
+      "examples": {
+        "invalid": [
+          "export default async function Page() { const data = await fetchSlowData(); return <div><Header /><Content data={data} /></div>; }"
+        ],
+        "valid": [
+          "import { Suspense } from 'react'; export default function Page() { return <div><Header /><Suspense fallback={<Skeleton />}><Content /></Suspense></div>; } async function Content() { const data = await fetchSlowData(); return <main>{data}</main>; }"
+        ]
+      }
+    },
+    {
+      "id": "ST-002",
+      "title": "Avoid Dynamic request-time APIs blocking initial layout streaming",
+      "problem": "Calling cookies() or headers() inside a root layout block will force the entire application tree into dynamic on-demand rendering, preventing root static shell streaming.",
+      "whyItMatters": "Root layouts are shared across all pages. If you call dynamic APIs at the root level without suspending them, the full layout shell cannot be pre-rendered or cached. The entire tree degrades into dynamic render mode, hurting first contentful paint metrics for all routes.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "cookies() accessed globally inside root layout.tsx",
+        "headers() called inside the main layout component body without Suspense boundaries"
+      ],
+      "allowedPatterns": [
+        "Wrapping dynamic header or profile UI in a separate Client Component that fetches session details asynchronously",
+        "Calling cookies() strictly inside nested, dynamic leaf pages or Suspense-guarded dynamic slots"
+      ],
+      "productionRisks": [
+        "Loss of static layout generation benefits for all sub-routes",
+        "Substantial performance loss in routing transitions",
+        "Increased load on server-side compute resources due to page-wide dynamic layouts"
+      ],
+      "architectureImplications": [
+        "Mandates shifting request-specific logic from shared structural layouts into page controllers or leaf components",
+        "Requires using lightweight clientside fetching or suspended micro-components for dynamic user details"
+      ],
+      "optimizationGuidance": [
+        "Keep layout files highly static and structural, leaving state-dependent or dynamic operations strictly to child routes or suspended components"
+      ],
+      "quickFixes": [
+        "Extract the dynamic section (e.g. User Profile badge) into an isolated component wrapped in <Suspense>"
+      ],
+      "architectureSuggestions": [
+        "Utilize Client Components to render user-specific headers from clientside cookies or tokens post-hydration, keeping layout HTML perfectly static"
+      ],
+      "examples": {
+        "invalid": [
+          "import { cookies } from 'next/headers'; export default function Layout({ children }) { const user = cookies().get('user'); return <html><body><Header user={user} />{children}</body></html>; }"
+        ],
+        "valid": [
+          "import { Suspense } from 'react'; export default function Layout({ children }) { return <html><body><Suspense fallback={<HeaderSkeleton />}><UserHeader /></Suspense>{children}</body></html>; } async function UserHeader() { const user = (await import('next/headers')).cookies().get('user'); return <Header user={user} />; }"
+        ]
+      }
+    },
+    {
+      "id": "ST-003",
+      "title": "Use useTransition or useFormStatus for Server Action pending states",
+      "problem": "Invoking Server Actions without loading UI makes the application feel frozen during network request cycles.",
+      "whyItMatters": "Server Actions trigger a POST request to the server, which can take several seconds to execute database operations. If you execute actions directly in onClick handlers or form submit actions without using React pending state APIs, the client UI provides no visual feedback, frustrating users who might repeatedly click buttons.",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "Executing form action mutations without tracking form status or wrapper transitions",
+        "Standard button elements calling actions directly without disabled states or loading indicators"
+      ],
+      "allowedPatterns": [
+        "Using React's useTransition() hook to wrapping action triggers: startTransition(async () => { await action(); })",
+        "Utilizing useFormStatus() inside nested submit buttons to show loading messages"
+      ],
+      "productionRisks": [
+        "Frustrated users clicking buttons multiple times, triggering duplicated server mutations",
+        "Degraded perceived performance and poor Core Web Vitals responsiveness scores",
+        "Inconsistent application state due to racing concurrent writes"
+      ],
+      "architectureImplications": [
+        "Requires separating action dispatch routines into proper state-aware UI containers",
+        "Encourages nested form-grain architectures inside Client Components"
+      ],
+      "optimizationGuidance": [
+        "Always disable submit buttons during action execution to fully prevent concurrent duplicate submissions"
+      ],
+      "quickFixes": [
+        "Wrap the Server Action call in a startTransition callback retrieved from the useTransition hook"
+      ],
+      "architectureSuggestions": [
+        "Create standard, reusable form submit controls that read useFormStatus and automatically display loaders and disable themselves during mutations"
+      ],
+      "examples": {
+        "invalid": [
+          "'use client'; import { updateProfile } from './actions'; export default function Profile() { return <button onClick={() => updateProfile()}>Update</button>; }"
+        ],
+        "valid": [
+          "'use client'; import { useTransition } from 'react'; import { updateProfile } from './actions'; export default function Profile() { const [isPending, startTransition] = useTransition(); return <button disabled={isPending} onClick={() => startTransition(() => updateProfile())}>{isPending ? 'Updating...' : 'Update'}</button>; }"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,91 @@
+{
+  "concept": "Revalidation",
+  "category": "caching",
+  "description": "Revalidation in Next.js App Router is the mechanism to update cached data without rebuilds. It includes Time-based Revalidation (automatic after interval) and On-demand Revalidation (purging based on events using tags or paths). This ensures high performance through static delivery while preventing outdated data from persisting indefinitely in production caches.",
+  "constraints": [
+    {
+      "id": "RV-001",
+      "title": "Use On-demand Revalidation After Data Mutations",
+      "problem": "Modifying data via Server Actions or API routes without purging cache tags or paths will cause users to see stale, un-mutated data.",
+      "whyItMatters": "Next.js highly caches pages and fetch queries. If a server mutation changes record values in a database, the cache remains unaware of this modification unless `revalidatePath` or `revalidateTag` is explicitly triggered. Failing to clear the cache results in confusing stale user experiences.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "Mutating database tables in Server Actions and redirecting without revalidation",
+        "Relying purely on time-based revalidation for user-triggered state modifications",
+        "Invoking clientside state mutations without triggering a router refresh or tag purge"
+      ],
+      "allowedPatterns": [
+        "Invoking revalidateTag('tag-name') after a database query update",
+        "Calling revalidatePath('/route-path') after successfully executing a state transition action",
+        "Bundling tag purges within Server Actions to ensure database and cache state are in sync"
+      ],
+      "productionRisks": [
+        "Stale or incorrect data presentation to the user",
+        "Form submission loops because changes are not reflected immediately",
+        "Cache state mismatch across edge nodes"
+      ],
+      "architectureImplications": [
+        "Requires coupling mutation points with validation events",
+        "Encourages a clean design of tag-based cache architecture across components"
+      ],
+      "optimizationGuidance": [
+        "Adopt granular tag-based cache configurations (revalidateTag) over full page-level revalidation (revalidatePath) to prevent unnecessary database queries"
+      ],
+      "quickFixes": [
+        "Add revalidatePath('/route') or revalidateTag('tag') immediately following your database write inside Server Actions"
+      ],
+      "architectureSuggestions": [
+        "Centralize caching tags inside a constants mapping file to ensure consistent tagging across write and read operations"
+      ],
+      "examples": {
+        "invalid": [
+          "export async function action(formData: FormData) { await updateItem(formData.get('id')); redirect('/items'); }"
+        ],
+        "valid": [
+          "import { revalidatePath } from 'next/cache'; export async function action(formData: FormData) { await updateItem(formData.get('id')); revalidatePath('/items'); redirect('/items'); }"
+        ]
+      }
+    },
+    {
+      "id": "RV-002",
+      "title": "Prevent Caching Mismatch by Synchronizing time-based revalidation tags",
+      "problem": "Setting short revalidation intervals on dynamic fetch operations in a static layout will cause rendering mismatches during static generation.",
+      "whyItMatters": "If a nested component sets a dynamic fetch timer (e.g. revalidate: 10) but the parent layout is fully static and never revalidated, the dynamic child data might get updated on the server while the static page HTML served to users remains stale, creating caching mismatch boundaries.",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "Adding extremely low time-based revalidation options to fetch calls in root layout files",
+        "Mixing time-based caching with dynamic route configs without using dynamic configurations"
+      ],
+      "allowedPatterns": [
+        "Keeping time-based revalidation configs consistent across nested route segments",
+        "Declaring export const revalidate = 60; at the top of layout or page component files to enforce global segment behaviors"
+      ],
+      "productionRisks": [
+        "Inconsistent rendering output on dynamic routing targets",
+        "Outdated data presented inside otherwise active dashboard layouts",
+        "Unnecessary server load from high frequency cache rebuild schedules"
+      ],
+      "architectureImplications": [
+        "Requires aligning caching strategies across layout and page tree structures",
+        "Pushes revalidation logic up to layout files or down to leaf fetch nodes cleanly"
+      ],
+      "optimizationGuidance": [
+        "Synchronize child page and parent layout revalidation durations to avoid serving mismatched data states"
+      ],
+      "quickFixes": [
+        "Add export const revalidate = X; at the page file level to declare page-wide revalidation rules consistently"
+      ],
+      "architectureSuggestions": [
+        "Enforce layout-wide revalidation values that act as bounds for child pages, avoiding child page caches updating independently from layout shells"
+      ],
+      "examples": {
+        "invalid": [
+          "// In component: fetch('/api/data', { next: { revalidate: 5 } }) inside layout.tsx with no revalidate config"
+        ],
+        "valid": [
+          "// In page.tsx: export const revalidate = 60; export default async function Page() { const data = await fetch('/api/data'); return <main>{data}</main>; }"
+        ]
+      }
+    }
+  ]
+}

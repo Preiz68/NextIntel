@@ -1,0 +1,128 @@
+{
+  "concept": "Middleware",
+  "category": "architecture",
+  "description": "Middleware in Next.js runs before a request is completed, allowing you to modify the response, redirect the user, or rewrite paths. It executes on the Edge Runtime, enabling extremely fast response times globally. Middleware is designed for lightweight routing logic, authentication checks, and header mutations.",
+  "constraints": [
+    {
+      "id": "MW-001",
+      "title": "Keep Middleware Operations Non-blocking and Async-First",
+      "problem": "Executing heavy computation, synchronous tasks, or large database fetches in middleware severely degrades the TTFB for all matched requests.",
+      "whyItMatters": "Because middleware runs globally on every request matching its matcher config, any latency introduced here delays HTML page and static asset delivery. Using synchronous fs routines or slow dynamic fetches degrades user experience across the whole site.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "Synchronous crypto operations in middleware",
+        "Executing recursive DB checks or nested queries before completing request delegation",
+        "Importing heavy parsing libraries directly into the middleware entrypoint"
+      ],
+      "allowedPatterns": [
+        "Lightweight header checks and JWT structure validation without heavy database lookup",
+        "Configuring strict route matching rules in export const config = { matcher: [...] } to limit execution"
+      ],
+      "productionRisks": [
+        "Drastic degradation of Time to First Byte (TTFB)",
+        "Edge runtime timeouts (usually 50ms limits on Vercel)",
+        "Complete route exhaustion under high-traffic spikes"
+      ],
+      "architectureImplications": [
+        "Requires shifting heavy data validation to downstream Server Components or API routes",
+        "Encourages stateless/token-based authorization designs over stateful sessions"
+      ],
+      "optimizationGuidance": [
+        "Ensure your middleware matcher is highly optimized to bypass static assets (.js, .css, _next/static, images)"
+      ],
+      "quickFixes": [
+        "Refactor synchronous calls to asynchronous counterparts, and configure strict matchers in the config block"
+      ],
+      "architectureSuggestions": [
+        "Use stateless JWTs to authorize routing, deferring complete user profile lookup to Server Components"
+      ],
+      "examples": {
+        "invalid": [
+          "export function middleware(request: NextRequest) { const user = fetchUserSync(request.cookies.get('session')); if (!user) return NextResponse.redirect('/login'); }"
+        ],
+        "valid": [
+          "export async function middleware(request: NextRequest) { const session = request.cookies.get('session'); if (!session) return NextResponse.redirect('/login'); }"
+        ]
+      }
+    },
+    {
+      "id": "MW-002",
+      "title": "Strictly Configure Middleware Matcher to Ignore Static Assets",
+      "problem": "Omitting a strict matcher configuration in middleware forces it to execute on every single static asset load (.png, .css, .js, favicon.ico), drastically increasing execution costs and slowing page load performance.",
+      "whyItMatters": "By default, middleware runs on all paths in your project. If you don't declare a matcher that excludes system folders and static media assets, Next.js will execute middleware routing logic multiple times per page load. This generates massive performance bottlenecks and spikes cloud computing cost.",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "Middleware files completely missing the export const config matcher declaration"
+      ],
+      "allowedPatterns": [
+        "Adding an export const config block with a matcher array excluding static directories: '/((?!_next/static|_next/image|favicon.ico|.*\\\\.png$).*)'"
+      ],
+      "productionRisks": [
+        "Massive latency overhead during page hydration and asset load",
+        "Unnecessary Edge function cost inflation",
+        "Severe Core Web Vitals score drops due to slow static asset response"
+      ],
+      "architectureImplications": [
+        "Forces separating structural assets from routing request flows",
+        "Pushes static files directly to CDN levels without middleware invocation"
+      ],
+      "optimizationGuidance": [
+        "Always use the standard negative-lookahead regex matcher to cleanly bypass system folders and image formats"
+      ],
+      "quickFixes": [
+        "Add export const config = { matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\\\.png$).*)'] }; to the middleware.ts file"
+      ],
+      "architectureSuggestions": [
+        "Define middleware routing policies strictly inside matching scope boundaries, keeping the script footprint minimal and lightning fast"
+      ],
+      "examples": {
+        "invalid": [
+          "// middleware.ts with no config matcher - runs on every single CSS, image, and JS request"
+        ],
+        "valid": [
+          "export async function middleware(request: NextRequest) { /* auth checks */ } export const config = { matcher: ['/dashboard/:path*', '/settings/:path*'] };"
+        ]
+      }
+    },
+    {
+      "id": "MW-003",
+      "title": "Prevent Infinite Redirect Loops in Middleware Redirect Rules",
+      "problem": "Redirecting unauthenticated users to a login page without excluding the login route itself from the middleware matcher triggers an infinite redirection loop, crashing the browser.",
+      "whyItMatters": "If your middleware intercepts requests to `/login` and detects the user is unauthenticated, it will attempt to redirect to `/login`. This triggers the middleware again, creating an endless execution loop. The browser will eventually stop loading the page and display a 'too many redirects' error.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "Unconditionally returning a redirect to /login inside middleware without checking if the pathname already matches /login"
+      ],
+      "allowedPatterns": [
+        "Excluding the login path inside middleware checks: if (pathname !== '/login') { return NextResponse.redirect('/login'); }",
+        "Configuring the matcher configuration to exclude the authentication paths entirely"
+      ],
+      "productionRisks": [
+        "Users experiencing instant 'Too Many Redirects' browser error page crashes",
+        "Complete lock-out of unauthenticated visitors from the login area",
+        "Saturated cloud server execution logs due to infinite redirect loops"
+      ],
+      "architectureImplications": [
+        "Requires explicit boundary checking inside the middleware validation logical tree",
+        "Enforces separating public access landing pages from auth-guarded routing spaces"
+      ],
+      "optimizationGuidance": [
+        "Always inspect the request.nextUrl.pathname property before triggering redirection logic inside middleware"
+      ],
+      "quickFixes": [
+        "Add a guard statement at the start of the redirect check: if (request.nextUrl.pathname === '/login') return NextResponse.next();"
+      ],
+      "architectureSuggestions": [
+        "Maintain a list of public routes inside a shared utility array and skip authentication checks inside middleware if request.nextUrl.pathname is in the list"
+      ],
+      "examples": {
+        "invalid": [
+          "export function middleware(req: NextRequest) { const auth = req.cookies.get('token'); if (!auth) return NextResponse.redirect(new URL('/login', req.url)); }"
+        ],
+        "valid": [
+          "export function middleware(req: NextRequest) { const auth = req.cookies.get('token'); const { pathname } = req.nextUrl; if (!auth && pathname !== '/login') { return NextResponse.redirect(new URL('/login', req.url)); } return NextResponse.next(); }"
+        ]
+      }
+    }
+  ]
+}

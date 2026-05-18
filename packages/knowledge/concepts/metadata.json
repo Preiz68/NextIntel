@@ -1,0 +1,88 @@
+{
+  "concept": "Metadata",
+  "category": "architecture",
+  "description": "Metadata in the App Router allows you to define head configuration elements (e.g. title, description, open graph tags) using static metadata objects or dynamic generateMetadata functions. It is designed to be fully static-analysis friendly, and can only be exported from Server Component layouts or pages.",
+  "constraints": [
+    {
+      "id": "MD-001",
+      "title": "Do Not Export Metadata from Client Components",
+      "problem": "Exporting export const metadata or generateMetadata() from a Client Component causes compilation errors or is ignored by Next.js at build time.",
+      "whyItMatters": "Next.js parses metadata at build-time and server-side render time to stream search-engine readable tags inside the HTML header before hydration. Because Client Components run primarily on the client, they cannot participate in this initial server-side head composition process.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "export const metadata = { ... } in a file containing 'use client'",
+        "export async function generateMetadata() { ... } in a file containing 'use client'"
+      ],
+      "allowedPatterns": [
+        "Exporting metadata strictly from layout.tsx or page.tsx Server Components",
+        "Updating client metadata dynamically using browser APIs inside useEffect or third-party libraries (e.g. react-helmet-async) if server meta is not required"
+      ],
+      "productionRisks": [
+        "Build-time validation failures preventing deployments",
+        "Omitted metadata on critical paths, degrading SEO ranking and Open Graph social sharing",
+        "Corrupted page headers due to ignored dynamic configurations"
+      ],
+      "architectureImplications": [
+        "Separates content headers (meta) from component layout state",
+        "Encourages server-centric routing definitions"
+      ],
+      "optimizationGuidance": [
+        "Deduplicate dynamic data fetches inside generateMetadata() as Next.js automatically dedupes overlapping fetch calls"
+      ],
+      "quickFixes": [
+        "Remove the metadata export from the Client Component, or shift the metadata declaration to the parent server-side layout.tsx/page.tsx"
+      ],
+      "architectureSuggestions": [
+        "Keep layout metadata highly generic, override detailed tags dynamically using generateMetadata() inside individual leaf page.tsx components"
+      ],
+      "examples": {
+        "invalid": [
+          "'use client'; export const metadata = { title: 'Dashboard' }; export default function Dashboard() { return <main>Content</main>; }"
+        ],
+        "valid": [
+          "// in page.tsx: export const metadata = { title: 'Dashboard' }; export default function Page() { return <DashboardClientComponent />; }"
+        ]
+      }
+    },
+    {
+      "id": "MD-002",
+      "title": "Avoid Fetch Duplication Inside Dynamic generateMetadata and Pages",
+      "problem": "Fetching the same dataset twice (once in generateMetadata and once in page.tsx) using uncached non-fetch drivers (like standard ORM queries) causes database request waterfalls.",
+      "whyItMatters": "Next.js automatically deduplicates fetch() requests with the same signature. However, if you are querying databases directly (e.g. using Prisma, Mongoose, or raw pg sockets) inside generateMetadata() and again inside page.tsx, these queries are not cached by default. This causes twice the database load per page view.",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "Executing direct un-memoized db.select() queries inside generateMetadata() and page.tsx for the exact same database records"
+      ],
+      "allowedPatterns": [
+        "Wrapping raw database query functions in React.cache() to deduplicate data fetching during request lifecycle",
+        "Using Next.js fetch() with standard caching configuration for data API endpoints"
+      ],
+      "productionRisks": [
+        "Doubled database connection pool utilization",
+        "Increased page render latency (TTFB) due to duplicate sequential SQL calls",
+        "Higher cost on serverless databases (e.g. Neon, Supabase) due to redundant query counts"
+      ],
+      "architectureImplications": [
+        "Necessitates implementing a cached data access layer (DAL) using React's cache()",
+        "Enforces clean caching boundaries around custom ORM database fetches"
+      ],
+      "optimizationGuidance": [
+        "Always wrap non-fetch database query adapters in React.cache() to ensure they resolve exactly once per user request"
+      ],
+      "quickFixes": [
+        "Wrap the database query function with React.cache: const getCachedItem = cache(async (id) => { return db.getItem(id); })"
+      ],
+      "architectureSuggestions": [
+        "Establish a solid Data Access Layer (DAL) separating database calls into dedicated cached services consumed transparently by both metadata resolvers and render pages"
+      ],
+      "examples": {
+        "invalid": [
+          "// In page.tsx: export async function generateMetadata({ params }) { const item = await db.getItem(params.id); return { title: item.title }; } export default async function Page({ params }) { const item = await db.getItem(params.id); return <div>{item.name}</div>; }"
+        ],
+        "valid": [
+          "import { cache } from 'react'; const getItem = cache(async (id) => db.getItem(id)); export async function generateMetadata({ params }) { const item = await getItem(params.id); return { title: item.title }; } export default async function Page({ params }) { const item = await getItem(params.id); return <div>{item.name}</div>; }"
+        ]
+      }
+    }
+  ]
+}

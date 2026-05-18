@@ -1,0 +1,131 @@
+{
+  "concept": "Runtime",
+  "category": "runtime",
+  "description": "Next.js supports two server-side execution runtimes: Node.js (full capabilities, larger startup overhead) and Edge Runtime (v8 isolates, extremely fast startup, restricted APIs). Selecting the appropriate runtime ensures optimal TTFB and allows utilizing specific package ecosystems.",
+  "constraints": [
+    {
+      "id": "RU-001",
+      "title": "Do Not Use Node.js Built-in Modules in Edge Runtime",
+      "problem": "Importing native Node.js APIs (such as fs, path, child_process) inside files configured with export const runtime = 'edge' causes build-time compilation or runtime execution errors.",
+      "whyItMatters": "The Edge Runtime utilizes lightweight v8 isolates which exclude the full Node.js standard library. While this yields sub-millisecond cold starts, referencing Node-only modules or dependencies that import them will crash compilation or route routing entirely.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "import fs from 'fs' in routes with export const runtime = 'edge'",
+        "import path from 'path' inside files marked as edge runtime target",
+        "Referencing process.env.NODE_ENV or native buffer classes unsafely inside edge contexts"
+      ],
+      "allowedPatterns": [
+        "Using standard browser fetch APIs and Web streams in Edge routes",
+        "Defining export const runtime = 'nodejs' when requiring database connectors or filesystem tools"
+      ],
+      "productionRisks": [
+        "Compilation/build failures when deploying to production hosts",
+        "Cold start routing crashes when invoking edge API endpoints",
+        "Edge middleware failures blocking all routing pathways"
+      ],
+      "architectureImplications": [
+        "Necessitates isolating Node-heavy operations to specific Node-only routes",
+        "Forces middleware to remain lightweight and restrict package dependencies"
+      ],
+      "optimizationGuidance": [
+        "Verify all middleware third-party dependencies are edge-compatible before importing them"
+      ],
+      "quickFixes": [
+        "Change export const runtime = 'edge' to 'nodejs', or replace native Node imports with Web API equivalents (e.g. Web streams)"
+      ],
+      "architectureSuggestions": [
+        "Establish microservices or isolated Node API endpoints for intensive operations, keeping layouts and edge pages lightweight"
+      ],
+      "examples": {
+        "invalid": [
+          "export const runtime = 'edge'; import fs from 'fs'; export async function GET() { const data = fs.readFileSync('file.txt'); return Response.json(data); }"
+        ],
+        "valid": [
+          "export const runtime = 'nodejs'; import fs from 'fs'; export async function GET() { const data = fs.readFileSync('file.txt'); return Response.json(data.toString()); }"
+        ]
+      }
+    },
+    {
+      "id": "RU-002",
+      "title": "Do Not Execute Raw Database Connection Blocks inside Edge Runtime",
+      "problem": "Attempting to instantiate standard ORM database connection pools (like PostgreSQL pg, MySQL mysql2) directly in Edge Routes crashes at build time due to lack of TCP/socket APIs on Edge runtime.",
+      "whyItMatters": "The Edge Runtime lacks support for TCP socket connections required by standard SQL databases. If you import a database adapter that connects via raw sockets inside an Edge Route, the application will crash. Database connections on Edge must be made via HTTP/REST database APIs (like Prisma Data Platform, Supabase HTTP, or Neon serverless driver).",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "import { Client } from 'pg' inside route files configured with export const runtime = 'edge'",
+        "Instantiating new Client() SQL connections globally inside Middleware"
+      ],
+      "allowedPatterns": [
+        "Using serverless HTTP/WebSocket drivers (like Neon's WebSockets adapter or Prisma Data Proxy) in Edge routes",
+        "Configuring data-heavy query routes as export const runtime = 'nodejs'"
+      ],
+      "productionRisks": [
+        "Uncaught connection exceptions on edge route hit",
+        "Deploy failures due to missing module compilation boundaries",
+        "Service exhaustion when spawning database drivers globally"
+      ],
+      "architectureImplications": [
+        "Enforces using modern serverless API endpoints or REST boundaries for dynamic datasets",
+        "Pushes database layer configurations to isolated, Node-backed micro-routes"
+      ],
+      "optimizationGuidance": [
+        "Use Neon serverless websockets or REST-based GraphQL pools when choosing the Edge runtime for fast global delivery"
+      ],
+      "quickFixes": [
+        "Change the route segment runtime to nodejs or switch database connection initialization to Neon's HTTP or serverless-compatible driver"
+      ],
+      "architectureSuggestions": [
+        "Create database adapter interfaces that conditionally select between direct TCP in Node runtime and REST-based data proxy APIs in Edge runtime"
+      ],
+      "examples": {
+        "invalid": [
+          "export const runtime = 'edge'; import { Client } from 'pg'; export async function GET() { const c = new Client('postgresql://...'); await c.connect(); }"
+        ],
+        "valid": [
+          "export const runtime = 'nodejs'; import { Client } from 'pg'; export async function GET() { const c = new Client('postgresql://...'); await c.connect(); const res = await c.query('SELECT 1'); return Response.json(res.rows); }"
+        ]
+      }
+    },
+    {
+      "id": "RU-003",
+      "title": "Adhere to the 1MB or 2MB Edge Runtime Code Size Limitation",
+      "problem": "Bundling large third-party dependencies into Edge routes or Middleware will cause deployment failures on hosting providers (like Vercel or Cloudflare Workers) due to strict code size caps.",
+      "whyItMatters": "The Edge Runtime is built to run on globally distributed lightweight compute boundaries. Major hosting providers enforce a hard code size limit of 1MB (compressed) or 2MB (uncompressed) for edge functions. Exceeding this limit prevents production deployments or leads to instant edge execution failure.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "Importing complete UI components or major visualization suites (e.g. Chart.js, D3) into Edge route handlers",
+        "Referencing large natural language processing (NLP) parser models directly inside Middleware"
+      ],
+      "allowedPatterns": [
+        "Using lightweight REST clients (e.g. native fetch) inside Edge functions to dispatch work to external heavier servers",
+        "Restricting Edge route modules to pure coordination logic, authentication validations, and header rewrites"
+      ],
+      "productionRisks": [
+        "Production deployment rejection by Vercel or Cloudflare CLI pipelines",
+        "Unscheduled edge routing outages due to memory overflow",
+        "Degraded Cold Start metrics as larger script blocks take longer to initialize"
+      ],
+      "architectureImplications": [
+        "Forces keeping Edge-based codebases small, modular, and extremely focused",
+        "Dictates pushing complex PDF generations, image processing, or heavy parsing workloads to background queues or Node.js endpoints"
+      ],
+      "optimizationGuidance": [
+        "Analyze bundled middleware output using webpack-bundle-analyzer or visual size analysis tools regularly"
+      ],
+      "quickFixes": [
+        "Extract large packages from the Edge file and delegate the work via a fetch call to a standard Node.js API route"
+      ],
+      "architectureSuggestions": [
+        "Adopt a split-execution architecture: use Edge for lightning-fast routing/session verification, but route computationally heavy steps to optimized Node.js backends"
+      ],
+      "examples": {
+        "invalid": [
+          "export const runtime = 'edge'; import { heavyPdfGenerator } from 'heavy-pdf-generator'; export async function POST() { return new Response(heavyPdfGenerator()); }"
+        ],
+        "valid": [
+          "export const runtime = 'nodejs'; import { heavyPdfGenerator } from 'heavy-pdf-generator'; export async function POST() { return new Response(heavyPdfGenerator()); }"
+        ]
+      }
+    }
+  ]
+}

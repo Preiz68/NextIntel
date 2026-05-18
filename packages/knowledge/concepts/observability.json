@@ -1,0 +1,87 @@
+{
+  "concept": "Observability",
+  "category": "observability",
+  "description": "Observability in Next.js enables monitoring and tracking application health using tracing, core metrics, and structured error reporting. Integrating observability libraries ensures real-time production performance tracking and alerts you to rendering anomalies or API latency spikes.",
+  "constraints": [
+    {
+      "id": "OB-001",
+      "title": "Enable Instrumentation File at Workspace Root",
+      "problem": "Omitting the instrumentation.ts file from the root directory prevents capturing telemetry data during application boot or runtime exceptions.",
+      "whyItMatters": "The `instrumentation.ts` (or `instrumentation.js`) file allows you to hook into the Next.js lifecycle to initialize monitoring services (e.g. OpenTelemetry, Sentry, Datadog) once on startup. Without this registration point, server-side dynamic traces, hydration errors, and edge execution crashes cannot be tracked.",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "Running OpenTelemetry or tracing logic inside global layout.tsx or inline component render loops"
+      ],
+      "allowedPatterns": [
+        "Defining a register() hook inside instrumentation.ts placed at the app root or src/ root folder",
+        "Enforcing export const experimental = { instrumentationHook: true } in next.config.js"
+      ],
+      "productionRisks": [
+        "Complete loss of visibility into server-side exceptions and database performance bottlenecks",
+        "Undetected hydration mismatches or memory leaks on production clusters",
+        "Unable to monitor Edge Middleware or Server Action execution traces"
+      ],
+      "architectureImplications": [
+        "Centralizes system-level telemetry and trace initialization outside the component layout tree",
+        "Ensures isolated monitoring modules load before server components execute"
+      ],
+      "optimizationGuidance": [
+        "Keep the register() function lightweight to avoid blocking process initialization during container boots"
+      ],
+      "quickFixes": [
+        "Create an instrumentation.ts file inside your app root and export a register() initialization function"
+      ],
+      "architectureSuggestions": [
+        "Integrate OpenTelemetry APIs inside the instrumentation hook, letting external collectors process log exports without impacting application performance"
+      ],
+      "examples": {
+        "invalid": [
+          "// Inside app/layout.tsx: import tracer from 'otel'; tracer.init();"
+        ],
+        "valid": [
+          "// In root instrumentation.ts: export async function register() { if (process.env.NEXT_RUNTIME === 'nodejs') { await import('./tracing'); } }"
+        ]
+      }
+    },
+    {
+      "id": "OB-002",
+      "title": "Do Not Print Raw console.log Logs in High-Frequency Edge Routes",
+      "problem": "Using standard console.log inside Edge middleware or high-frequency API routes can saturate the execution logging pool, slowing down server response times and driving up logging host costs.",
+      "whyItMatters": "Logging in the Edge Runtime (v8 isolates) is highly dynamic and synchronized. Heavy synchronous console output in hot paths blocks thread execution in micro-containers, adding severe TTFB overhead. High frequency logs also flood telemetry services, inflating operational monitoring bills.",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "Executing unconditional console.log(request) or console.debug() inside the main middleware logic for every single traffic hit"
+      ],
+      "allowedPatterns": [
+        "Using structured, level-gated logger instances (e.g. pino, winston) configured to log only WARN/ERROR in production",
+        "Limiting route-level tracking strictly to dynamic analytics endpoints triggered off-thread"
+      ],
+      "productionRisks": [
+        "Unnecessary millisecond delays in edge request cycles",
+        "Rapid cost escalation on serverless logs storage platforms (e.g. Axiom, Better Stack)",
+        "Overwhelming server console screens, making real production errors difficult to spot"
+      ],
+      "architectureImplications": [
+        "Encourages standard structured logging patterns",
+        "Separates diagnostics from user traffic paths"
+      ],
+      "optimizationGuidance": [
+        "Configure logging configurations to exclude telemetry during healthy static asset deliveries"
+      ],
+      "quickFixes": [
+        "Remove raw console.log statements from the middleware or API hot paths, replacing them with a conditional level-based logging helper"
+      ],
+      "architectureSuggestions": [
+        "Implement diagnostic flags in local dev envs and leverage serverless tracing (OpenTelemetry spans) to monitor hot paths without blocking console outputs"
+      ],
+      "examples": {
+        "invalid": [
+          "export async function middleware(req: NextRequest) { console.log('REQ HIT:', req.url); }"
+        ],
+        "valid": [
+          "export async function middleware(req: NextRequest) { if (process.env.NODE_ENV === 'development') { console.log('REQ HIT:', req.url); } }"
+        ]
+      }
+    }
+  ]
+}
