@@ -22,7 +22,13 @@ export const requireGenerateStaticParams: Rule = {
     const diagnostics: Diagnostic[] = [];
 
     // ── Fetch semantic knowledge for this rule ──────────────────────────────
-    const constraint = context.knowledgeRegistry.getConstraintById("RE-003");
+    const constraint = context.knowledgeRegistry.getConstraint("rendering", "RE-003");
+
+    const whyItMatters = constraint?.whyItMatters ?? "Dynamic route segments should export generateStaticParams to enable static rendering.";
+    const quickFixes = constraint?.quickFixes ?? [];
+    const architectureSuggestions = constraint?.architectureSuggestions ?? [];
+    const optimizationGuidance = constraint?.optimizationGuidance ?? [];
+    const productionRisks = constraint?.productionRisks ?? [];
 
     for (const analysis of context.analyses) {
       // We only care about page components that are Server Components
@@ -44,22 +50,20 @@ export const requireGenerateStaticParams: Rule = {
           file: analysis.filePath,
           severity: constraint?.severity ?? "warning",
           ruleId: this.id,
+          id: constraint?.id ?? "RE-003",
 
-          // ── Core message ──────────────────────────────────────────────────
-          message:
-            "Dynamic route segment is missing generateStaticParams(). Without it, every request to this dynamic route triggers on-demand server rendering.",
+          // ── Core message dynamically constructed from constraint ─────────
+          message: `Dynamic route segment is missing generateStaticParams(). ${constraint?.problem ?? ""}`,
 
           // ── Legacy fix (preserved for backward compat) ────────────────────
-          fix:
-            constraint?.quickFixes?.[0] ??
-            "Export async function generateStaticParams() that fetches all known IDs from your data source.",
+          fix: quickFixes[0],
 
           // ── Knowledge-enriched fields ─────────────────────────────────────
-          whyItMatters: constraint?.whyItMatters,
-          quickFixes: constraint?.quickFixes,
-          architectureSuggestions: constraint?.architectureSuggestions,
-          optimizationGuidance: constraint?.optimizationGuidance,
-          productionRisks: constraint?.productionRisks,
+          whyItMatters,
+          quickFixes,
+          architectureSuggestions,
+          optimizationGuidance,
+          productionRisks,
           examples: constraint?.examples,
         });
       }

@@ -43,3 +43,6 @@ export const KnowledgeConceptSchema = z.object({
 export type KnowledgeExamples = z.infer<typeof KnowledgeExamplesSchema>;
 export type KnowledgeConstraint = z.infer<typeof KnowledgeConstraintSchema>;
 export type KnowledgeConcept = z.infer<typeof KnowledgeConceptSchema>;
+
+export type ConceptDefinition = KnowledgeConcept;
+export type ConstraintDefinition = KnowledgeConstraint;

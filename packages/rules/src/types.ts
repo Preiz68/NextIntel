@@ -23,25 +23,26 @@ export interface Diagnostic {
   // ── Identity ──────────────────────────────────────────────────────────────
   severity: Severity;
   ruleId: string;
+  id: string; // Dynamic constraint ID (e.g. SC-001)
   message: string;
 
   // ── Knowledge-driven enrichment ──────────────────────────────────────────
   /** Why this violation matters in production Next.js applications. */
-  whyItMatters?: string;
+  whyItMatters: string;
 
   /** Concrete, actionable quick fixes sourced from the knowledge pack. */
-  quickFixes?: string[];
+  quickFixes: string[];
 
   /** High-level architectural recommendations for the affected domain. */
-  architectureSuggestions?: string[];
+  architectureSuggestions: string[];
 
   /**
    * Performance or rendering optimisation guidance relevant to this violation.
    */
-  optimizationGuidance?: string[];
+  optimizationGuidance: string[];
 
   /** Production risks that occur if this violation is left unaddressed. */
-  productionRisks?: string[];
+  productionRisks: string[];
 
   /**
    * Code examples from the knowledge pack (valid / invalid patterns).

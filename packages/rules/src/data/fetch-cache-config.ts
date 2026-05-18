@@ -21,7 +21,13 @@ export const fetchCacheConfig: Rule = {
     const diagnostics: Diagnostic[] = [];
 
     // ── Fetch semantic knowledge for this rule ──────────────────────────────
-    const constraint = context.knowledgeRegistry.getConstraintById("CA-001");
+    const constraint = context.knowledgeRegistry.getConstraint("caching", "CA-001");
+
+    const whyItMatters = constraint?.whyItMatters ?? "Explicit cache configurations ensure reproducible rendering behavior.";
+    const quickFixes = constraint?.quickFixes ?? [];
+    const architectureSuggestions = constraint?.architectureSuggestions ?? [];
+    const optimizationGuidance = constraint?.optimizationGuidance ?? [];
+    const productionRisks = constraint?.productionRisks ?? [];
 
     for (const analysis of context.analyses) {
       // Data caching only applies to Server Components, Route Handlers, and
@@ -36,22 +42,20 @@ export const fetchCacheConfig: Rule = {
           line: fetchCall.line,
           severity: constraint?.severity ?? "warning",
           ruleId: this.id,
+          id: constraint?.id ?? "CA-001",
 
-          // ── Core message ──────────────────────────────────────────────────
-          message:
-            "Implicit fetch caching detected. In the current Next.js model, fetch() is NOT cached by default. Add an explicit { cache: 'force-cache' } or { next: { revalidate: N } } option, or use the 'use cache' directive on the enclosing function.",
+          // ── Core message dynamically constructed from constraint ─────────
+          message: `Implicit fetch caching detected. ${constraint?.problem ?? ""}`,
 
           // ── Legacy fix (preserved for backward compat) ────────────────────
-          fix:
-            constraint?.quickFixes[0] ??
-            "Add { cache: 'force-cache' } or { next: { revalidate: 3600 } } to the fetch() call.",
+          fix: quickFixes[0],
 
           // ── Knowledge-enriched fields ─────────────────────────────────────
-          whyItMatters: constraint?.whyItMatters,
-          quickFixes: constraint?.quickFixes,
-          architectureSuggestions: constraint?.architectureSuggestions,
-          optimizationGuidance: constraint?.optimizationGuidance,
-          productionRisks: constraint?.productionRisks,
+          whyItMatters,
+          quickFixes,
+          architectureSuggestions,
+          optimizationGuidance,
+          productionRisks,
           examples: constraint?.examples,
         });
       }

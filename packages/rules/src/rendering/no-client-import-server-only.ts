@@ -21,8 +21,8 @@ export const noClientImportServerOnly: Rule = {
     const diagnostics: Diagnostic[] = [];
 
     // ── Fetch semantic knowledge from two complementary domains ─────────────
-    const scConstraint = context.knowledgeRegistry.getConstraintById("SC-004");
-    const ccConstraint = context.knowledgeRegistry.getConstraintById("CC-003");
+    const scConstraint = context.knowledgeRegistry.getConstraint("server-components", "SC-004");
+    const ccConstraint = context.knowledgeRegistry.getConstraint("client-components", "CC-003");
 
     // Merge guidance from both domains — deduplicate by string content
     const mergeUnique = (...arrays: (string[] | undefined)[]): string[] => {
@@ -44,6 +44,8 @@ export const noClientImportServerOnly: Rule = {
     const optimizationGuidance = mergeUnique(ccConstraint?.optimizationGuidance, scConstraint?.optimizationGuidance);
     const productionRisks = mergeUnique(ccConstraint?.productionRisks, scConstraint?.productionRisks);
 
+    const whyItMatters = ccConstraint?.whyItMatters ?? scConstraint?.whyItMatters ?? "Server modules cannot be directly imported in Client Components.";
+
     for (const edge of (context as any).edges || []) {
       const fromNode = context.nodes.get(edge.from);
       const toNode = context.nodes.get(edge.to);
@@ -57,17 +59,16 @@ export const noClientImportServerOnly: Rule = {
         file: edge.from,
         severity: ccConstraint?.severity ?? scConstraint?.severity ?? "error",
         ruleId: this.id,
+        id: ccConstraint?.id ?? "CC-003",
 
-        // ── Core message ───────────────────────────────────────────────────
-        message: `Client Component '${edge.from}' imports Server Component/Module '${edge.to}'. This will cause a runtime error if the server module is rendered directly in a Client Component, and may leak server secrets.`,
+        // ── Core message dynamically constructed from constraint ─────────
+        message: `Client Component '${edge.from}' imports Server Component/Module '${edge.to}'. ${ccConstraint?.problem ?? ""}`,
 
         // ── Legacy fix (preserved for backward compat) ─────────────────────
-        fix:
-          quickFixes[0] ??
-          "Pass the Server Component as 'children' or a prop instead of importing it directly.",
+        fix: quickFixes[0],
 
         // ── Knowledge-enriched fields ───────────────────────────────────────
-        whyItMatters: ccConstraint?.whyItMatters,
+        whyItMatters,
         quickFixes,
         architectureSuggestions,
         optimizationGuidance,

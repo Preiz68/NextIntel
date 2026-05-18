@@ -20,7 +20,13 @@ export const noBrowserApiInServerComponents: Rule = {
     const diagnostics: Diagnostic[] = [];
 
     // ── Fetch semantic knowledge for this rule ──────────────────────────────
-    const constraint = context.knowledgeRegistry.getConstraintById("SC-001");
+    const constraint = context.knowledgeRegistry.getConstraint("server-components", "SC-001");
+
+    const whyItMatters = constraint?.whyItMatters ?? "Browser APIs are not available during server-side rendering.";
+    const quickFixes = constraint?.quickFixes ?? [];
+    const architectureSuggestions = constraint?.architectureSuggestions ?? [];
+    const optimizationGuidance = constraint?.optimizationGuidance ?? [];
+    const productionRisks = constraint?.productionRisks ?? [];
 
     for (const analysis of context.analyses) {
       if (!analysis.isServerComponent || !analysis.usesBrowserAPI) continue;
@@ -31,19 +37,20 @@ export const noBrowserApiInServerComponents: Rule = {
           line: b.line,
           severity: constraint?.severity ?? "error",
           ruleId: this.id,
+          id: constraint?.id ?? "SC-001",
 
-          // ── Core message ─────────────────────────────────────────────────
-          message: `Browser API '${b.api}' is used in a Server Component. Server Components run exclusively in the Node.js runtime — there is no browser context, DOM, or Web API available.`,
+          // ── Core message dynamically constructed from constraint ─────────
+          message: `Browser API '${b.api}' is used in a Server Component. ${constraint?.problem ?? ""}`,
 
           // ── Legacy fix (preserved for backward compat) ───────────────────
-          fix: constraint?.quickFixes[0] ?? `Add "use client"; at the top of the file.`,
+          fix: quickFixes[0],
 
           // ── Knowledge-enriched fields ─────────────────────────────────────
-          whyItMatters: constraint?.whyItMatters,
-          quickFixes: constraint?.quickFixes,
-          architectureSuggestions: constraint?.architectureSuggestions,
-          optimizationGuidance: constraint?.optimizationGuidance,
-          productionRisks: constraint?.productionRisks,
+          whyItMatters,
+          quickFixes,
+          architectureSuggestions,
+          optimizationGuidance,
+          productionRisks,
           examples: constraint?.examples,
         });
       }

@@ -27,10 +27,8 @@ export const noUnoptimizedFetch: Rule = {
     const diagnostics: Diagnostic[] = [];
 
     // ── Fetch semantic knowledge from two complementary domains ─────────────
-    const perfConstraint =
-      context.knowledgeRegistry.getConstraintById("PF-001");
-    const dataConstraint =
-      context.knowledgeRegistry.getConstraintById("DF-001");
+    const perfConstraint = context.knowledgeRegistry.getConstraint("performance", "PF-001");
+    const dataConstraint = context.knowledgeRegistry.getConstraint("data-fetching", "DF-001");
 
     // Merge guidance from both domains — deduplicate by string content
     const mergeUnique = (...arrays: (string[] | undefined)[]): string[] => {
@@ -64,6 +62,8 @@ export const noUnoptimizedFetch: Rule = {
       perfConstraint?.productionRisks
     );
 
+    const whyItMatters = dataConstraint?.whyItMatters ?? perfConstraint?.whyItMatters ?? "Data fetching in Server Components is critical for performance.";
+
     for (const analysis of context.analyses) {
       // Only applies to Server Components — client-side fetching is handled
       // separately by the data-fetching rule domain.
@@ -77,18 +77,16 @@ export const noUnoptimizedFetch: Rule = {
           line: f.line,
           severity: "warning",
           ruleId: this.id,
+          id: dataConstraint?.id ?? "DF-001",
 
-          // ── Core message ──────────────────────────────────────────────────
-          message:
-            "Unoptimized fetch() detected in a Server Component. Without { cache: 'force-cache' } or { next: { revalidate: N } }, this fetch runs on every request, increasing upstream load and preventing prerendering.",
+          // ── Core message dynamically constructed from constraint ─────────
+          message: `Unoptimized fetch() detected in a Server Component. ${dataConstraint?.problem ?? ""}`,
 
           // ── Legacy fix (preserved for backward compat) ────────────────────
-          fix:
-            quickFixes[0] ??
-            "Add { next: { revalidate: 3600 } } or { cache: 'force-cache' } to the fetch() call.",
+          fix: quickFixes[0],
 
           // ── Knowledge-enriched fields (merged from perf + data-fetching) ──
-          whyItMatters: dataConstraint?.whyItMatters,
+          whyItMatters,
           quickFixes,
           architectureSuggestions,
           optimizationGuidance,

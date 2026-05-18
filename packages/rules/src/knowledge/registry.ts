@@ -5,6 +5,8 @@ import {
   KnowledgeConceptSchema,
   type KnowledgeConcept,
   type KnowledgeConstraint,
+  type ConceptDefinition,
+  type ConstraintDefinition,
 } from "./schema.js";
 
 // ---------------------------------------------------------------------------
@@ -97,7 +99,10 @@ export class KnowledgeRegistry {
         }
 
         const concept = result.data;
+        const slug = file.replace(".json", "");
         this.concepts.set(concept.concept, concept);
+        this.conceptsByCategory.set(slug, concept);
+        // Map category fallback for backward compatibility
         this.conceptsByCategory.set(concept.category, concept);
       } catch (err: any) {
         console.error(
@@ -112,12 +117,12 @@ export class KnowledgeRegistry {
   // -------------------------------------------------------------------------
 
   /**
-   * Retrieve a full knowledge concept by its human-readable concept name.
+   * Retrieve a full knowledge concept by its human-readable concept name or slug.
    *
-   * @example getConcept("Server Components")
+   * @example getConcept("Server Components") or getConcept("server-components")
    */
-  getConcept(conceptName: string): KnowledgeConcept | undefined {
-    return this.concepts.get(conceptName);
+  getConcept(concept: string): ConceptDefinition | undefined {
+    return this.concepts.get(concept) ?? this.conceptsByCategory.get(concept);
   }
 
   /**
@@ -125,28 +130,34 @@ export class KnowledgeRegistry {
    *
    * @example getConceptByCategory("server-components")
    */
-  getConceptByCategory(category: string): KnowledgeConcept | undefined {
+  getConceptByCategory(category: string): ConceptDefinition | undefined {
     return this.conceptsByCategory.get(category);
   }
 
   /**
-   * Retrieve a specific constraint from a concept by the constraint's title.
-   * Performs a case-insensitive substring match on the title so callers don't
-   * need to memorise the exact title string.
-   *
-   * @example getConstraint("Server Components", "No Browser APIs")
+   * Retrieve a specific constraint by pack name/slug and constraint ID.
    */
   getConstraint(
-    conceptName: string,
-    titleSubstring: string
-  ): KnowledgeConstraint | undefined {
-    const concept = this.concepts.get(conceptName);
+    pack: string,
+    constraintId: string
+  ): ConstraintDefinition | undefined {
+    const concept = this.getConcept(pack);
     if (!concept) return undefined;
+    return concept.constraints.find((c) => c.id === constraintId);
+  }
 
-    const lower = titleSubstring.toLowerCase();
-    return concept.constraints.find((c) =>
-      c.title.toLowerCase().includes(lower)
-    );
+  /**
+   * Retrieve patterns of type 'forbidden' or 'allowed' for a given pack.
+   */
+  getPatterns(pack: string, type: "forbidden" | "allowed"): string[] {
+    const concept = this.getConcept(pack);
+    if (!concept) return [];
+    const patterns: string[] = [];
+    for (const constraint of concept.constraints) {
+      const list = type === "forbidden" ? constraint.forbiddenPatterns : constraint.allowedPatterns;
+      patterns.push(...list);
+    }
+    return patterns;
   }
 
   /**
@@ -154,7 +165,7 @@ export class KnowledgeRegistry {
    *
    * @example getConstraintById("SC-001")
    */
-  getConstraintById(id: string): KnowledgeConstraint | undefined {
+  getConstraintById(id: string): ConstraintDefinition | undefined {
     for (const concept of this.concepts.values()) {
       const found = concept.constraints.find((c) => c.id === id);
       if (found) return found;

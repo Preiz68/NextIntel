@@ -23,7 +23,13 @@ export const noBrowserGlobalsInClientRender: Rule = {
     const diagnostics: Diagnostic[] = [];
 
     // ── Fetch semantic knowledge for this rule ──────────────────────────────
-    const constraint = context.knowledgeRegistry.getConstraintById("HY-001");
+    const constraint = context.knowledgeRegistry.getConstraint("hydration", "HY-001");
+
+    const whyItMatters = constraint?.whyItMatters ?? "Server and Client render output must match on first render.";
+    const quickFixes = constraint?.quickFixes ?? [];
+    const architectureSuggestions = constraint?.architectureSuggestions ?? [];
+    const optimizationGuidance = constraint?.optimizationGuidance ?? [];
+    const productionRisks = constraint?.productionRisks ?? [];
 
     for (const analysis of context.analyses) {
       // Only applies to Client Components — Server Components have a separate rule.
@@ -35,21 +41,20 @@ export const noBrowserGlobalsInClientRender: Rule = {
           line: apiUsage.line,
           severity: constraint?.severity ?? "warning",
           ruleId: this.id,
+          id: constraint?.id ?? "HY-001",
 
-          // ── Core message ──────────────────────────────────────────────────
-          message: `Browser API '${apiUsage.api}' is accessed during the top-level render of a Client Component. The server pre-renders this component without browser context, so the output will differ from the initial client render, causing a hydration mismatch.`,
+          // ── Core message dynamically constructed from constraint ─────────
+          message: `Browser API '${apiUsage.api}' is accessed during the top-level render of a Client Component. ${constraint?.problem ?? ""}`,
 
           // ── Legacy fix (preserved for backward compat) ────────────────────
-          fix:
-            constraint?.quickFixes[0] ??
-            "Move the browser API access into a useEffect callback to ensure it only runs after hydration.",
+          fix: quickFixes[0],
 
           // ── Knowledge-enriched fields ─────────────────────────────────────
-          whyItMatters: constraint?.whyItMatters,
-          quickFixes: constraint?.quickFixes,
-          architectureSuggestions: constraint?.architectureSuggestions,
-          optimizationGuidance: constraint?.optimizationGuidance,
-          productionRisks: constraint?.productionRisks,
+          whyItMatters,
+          quickFixes,
+          architectureSuggestions,
+          optimizationGuidance,
+          productionRisks,
           examples: constraint?.examples,
         });
       }

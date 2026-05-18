@@ -19,7 +19,13 @@ export const noHooksInServerComponents: Rule = {
     const diagnostics: Diagnostic[] = [];
 
     // ── Fetch semantic knowledge for this rule ──────────────────────────────
-    const constraint = context.knowledgeRegistry.getConstraintById("SC-002");
+    const constraint = context.knowledgeRegistry.getConstraint("server-components", "SC-002");
+    
+    const whyItMatters = constraint?.whyItMatters ?? "React hooks require a client runtime context.";
+    const quickFixes = constraint?.quickFixes ?? [];
+    const architectureSuggestions = constraint?.architectureSuggestions ?? [];
+    const optimizationGuidance = constraint?.optimizationGuidance ?? [];
+    const productionRisks = constraint?.productionRisks ?? [];
 
     for (const analysis of context.analyses) {
       if (!analysis.isServerComponent || analysis.hookDetails.length === 0)
@@ -42,19 +48,20 @@ export const noHooksInServerComponents: Rule = {
           line: hook.line,
           severity: constraint?.severity ?? "error",
           ruleId: this.id,
+          id: constraint?.id ?? "SC-002",
 
-          // ── Core message ─────────────────────────────────────────────────
-          message: `React hook '${hook.name}' is used in a Server Component. Hooks require the React client runtime and cannot run during the server-side RSC render pass.`,
+          // ── Core message dynamically constructed from constraint ─────────
+          message: `React hook '${hook.name}' is used in a Server Component. ${constraint?.problem ?? ""}`,
 
           // ── Legacy fix (preserved for backward compat) ───────────────────
-          fix: constraint?.quickFixes[0] ?? `Add "use client"; at the top of the file.`,
+          fix: quickFixes[0],
 
           // ── Knowledge-enriched fields ─────────────────────────────────────
-          whyItMatters: constraint?.whyItMatters,
-          quickFixes: constraint?.quickFixes,
-          architectureSuggestions: constraint?.architectureSuggestions,
-          optimizationGuidance: constraint?.optimizationGuidance,
-          productionRisks: constraint?.productionRisks,
+          whyItMatters,
+          quickFixes,
+          architectureSuggestions,
+          optimizationGuidance,
+          productionRisks,
           examples: constraint?.examples,
         });
       }
