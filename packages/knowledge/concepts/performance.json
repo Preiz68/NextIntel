@@ -1,0 +1,288 @@
+{
+  "concept": "Performance",
+  "category": "performance",
+  "description": "Next.js provides automatic performance optimizations including Server Components (no client JS), code-splitting by route segment, prefetching via the <Link> component, image optimization via <Image>, font optimization via next/font, and script deferred loading via <Script>. Application-level performance requires intentional architecture: minimizing client bundle size, maximizing prerendering scope, eliminating data waterfalls, using streaming for slow content, and optimizing Core Web Vitals (LCP, CLS, INP). Performance is an architectural concern determined at design time, not a post-hoc optimization.",
+
+  "constraints": [
+    {
+      "id": "PF-001",
+      "title": "Minimize Client JavaScript Bundle — Push 'use client' to Leaf Nodes",
+      "problem": "Client JavaScript bundle size directly determines Time to Interactive (TTI) and Interaction to Next Paint (INP). Placing 'use client' too high in the component tree unnecessarily includes server-renderable components in the client bundle.",
+      "whyItMatters": "Every kilobyte in the client bundle must be downloaded, parsed, and executed before the page is fully interactive. Server Components contribute zero bytes to the client bundle. Maximizing the Server Component surface area is the most effective way to reduce TTI and improve Core Web Vitals. A single misplaced 'use client' on a parent component can pull in megabytes of server-only logic.",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "Adding 'use client' to layout.tsx or page.tsx when only a leaf component needs interactivity",
+        "Not using next/dynamic for large Client Components that are not needed immediately",
+        "Importing large third-party libraries into Client Components without tree-shaking verification",
+        "Using barrel imports (import * from 'large-library') in Client Components",
+        "Not using optimizePackageImports for icon libraries or large component suites"
+      ],
+      "allowedPatterns": [
+        "next/dynamic with lazy loading for non-critical Client Components",
+        "experimental.optimizePackageImports in next.config.js for large libraries",
+        "@next/bundle-analyzer to measure and monitor bundle composition",
+        "Explicit named imports instead of barrel imports",
+        "Server Components for all non-interactive UI"
+      ],
+      "productionRisks": [
+        "High TTI degrading user experience and INP Core Web Vital",
+        "Poor Lighthouse scores affecting SEO and reputation",
+        "Increased data transfer costs for users on metered connections",
+        "Slow page interactivity on low-end devices"
+      ],
+      "architectureImplications": [
+        "Bundle size is an architectural constraint, not a deployment concern",
+        "Every 'use client' boundary decision has a measurable bundle size impact"
+      ],
+      "optimizationGuidance": [
+        "Run @next/bundle-analyzer after every significant feature addition",
+        "Set a per-route JavaScript budget and enforce it in CI",
+        "Use next/dynamic with ssr: true for large Client Components that load below the fold"
+      ],
+      "quickFixes": [
+        "Move 'use client' from the parent layout to the specific interactive child component",
+        "Add next/dynamic lazy loading for a large Client Component"
+      ],
+      "architectureSuggestions": [
+        "Treat client JavaScript as a scarce resource: budget it per route, measure it continuously, and require justification for additions",
+        "Enable experimental.optimizePackageImports in next.config.js for all icon libraries and large component suites"
+      ],
+      "examples": {
+        "invalid": [
+          "'use client'\n// This entire file is now in the client bundle\nimport Header from './header' // Could be Server Component\nimport Footer from './footer' // Could be Server Component\nimport SearchBar from './search-bar' // Only this needs 'use client'\nexport default function Layout({ children }) { return <><Header /><SearchBar />{children}<Footer /></> }"
+        ],
+        "valid": [
+          "// layout.tsx (Server Component)\nimport Header from './header' // Server Component — no JS shipped\nimport Footer from './footer' // Server Component — no JS shipped\nimport SearchBar from './search-bar' // 'use client' — only this in bundle\nexport default function Layout({ children }) { return <><Header /><SearchBar />{children}<Footer /></> }"
+        ]
+      }
+    },
+    {
+      "id": "PF-002",
+      "title": "Use next/image for All User-Facing Images",
+      "problem": "Using raw <img> HTML tags instead of Next.js's <Image> component bypasses automatic image optimization, modern format conversion (WebP/AVIF), responsive sizing, and Cumulative Layout Shift (CLS) prevention.",
+      "whyItMatters": "Images are typically the largest LCP element. Unoptimized images served in legacy formats (JPEG, PNG) with incorrect sizing contribute directly to poor LCP scores. Raw <img> tags without explicit width/height cause CLS as images load and push content down. next/image automatically addresses all of these at zero additional code cost.",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "<img src={...}> for user-visible images",
+        "Raw <img> tags without explicit width and height (causes CLS)",
+        "Loading large images without lazy loading for below-the-fold content",
+        "Not using priority={true} on the LCP image (the largest above-the-fold image)",
+        "Not specifying sizes prop for responsive images, causing oversized image downloads on mobile"
+      ],
+      "allowedPatterns": [
+        "<Image src={...} width={800} height={600} alt='...' /> for fixed-size images",
+        "<Image src={...} fill alt='...' /> for images filling a container",
+        "<Image src={...} priority={true} /> for the LCP image",
+        "<Image src={...} loading='lazy' /> (default) for below-the-fold images",
+        "Specifying sizes prop for images that change size across breakpoints"
+      ],
+      "productionRisks": [
+        "Poor LCP scores from unoptimized large images",
+        "High bandwidth usage from uncompressed legacy formats",
+        "CLS from images loading without dimensions",
+        "SEO ranking impact from Core Web Vitals degradation"
+      ],
+      "architectureImplications": [
+        "Image optimization is an infrastructure concern; next/image handles it with zero configuration",
+        "The priority prop on the LCP image enables resource hint preloading — it is critical to set correctly"
+      ],
+      "optimizationGuidance": [
+        "Identify the LCP element on all key routes using Lighthouse or Chrome DevTools and add priority={true}",
+        "Configure next.config.js remotePatterns for all external image domains"
+      ],
+      "quickFixes": [
+        "Replace <img src={url}> with <Image src={url} width={w} height={h} alt='description' /> from 'next/image'"
+      ],
+      "architectureSuggestions": [
+        "Create a shared Image component wrapper in components/ui/image.tsx that enforces alt text and default optimization settings"
+      ],
+      "examples": {
+        "invalid": [
+          "<img src={product.imageUrl} alt={product.name} /> // No optimization, no size hints, potential CLS"
+        ],
+        "valid": [
+          "import Image from 'next/image'\n<Image src={product.imageUrl} width={400} height={400} alt={product.name} priority={isLCP} />"
+        ]
+      }
+    },
+    {
+      "id": "PF-003",
+      "title": "Use next/font to Eliminate Layout Shift from Web Fonts",
+      "problem": "Loading web fonts via <link> tags to external CDNs (Google Fonts) causes network requests that delay font availability, produce Flash of Invisible Text (FOIT) or Flash of Unstyled Text (FOUT), and contribute to Cumulative Layout Shift (CLS).",
+      "whyItMatters": "CLS from font loading is one of the most common Core Web Vitals failures. next/font automatically self-hosts fonts alongside the application's static assets, applies size-adjust to eliminate layout shift, and generates CSS variables for convenient usage. It removes the external network request entirely and is zero-runtime-cost.",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "<link href='https://fonts.googleapis.com/...' rel='stylesheet'> in layout.tsx",
+        "Importing fonts from CDNs in _document.tsx or global CSS @import",
+        "Using @font-face with remote URLs without size-adjust declarations",
+        "Loading multiple font weights and styles unnecessarily (inflates CSS and font files)"
+      ],
+      "allowedPatterns": [
+        "import { Inter } from 'next/font/google'; const inter = Inter({ subsets: ['latin'] })",
+        "import localFont from 'next/font/local'; for self-hosted fonts",
+        "Applying the font className to the root <html> element",
+        "Using CSS variables (variable: '--font-inter') for flexible usage in Tailwind"
+      ],
+      "productionRisks": [
+        "CLS degradation from font-swap layout shifts",
+        "External network dependency on Google Fonts CDN (single point of failure, latency, privacy)",
+        "FOUT (Flash of Unstyled Text) degrading perceived quality"
+      ],
+      "architectureImplications": [
+        "Font loading strategy is a layout-level concern; apply the font class to the root HTML element in layout.tsx",
+        "self-hosting eliminates external network dependencies"
+      ],
+      "optimizationGuidance": [
+        "Load only the font weights and styles actually used in the design",
+        "Use the display: 'swap' option (default) or display: 'optional' for performance-critical text"
+      ],
+      "quickFixes": [
+        "Replace the <link> Google Fonts import with next/font/google",
+        "Apply the font className to the <html> element in root layout"
+      ],
+      "architectureSuggestions": [],
+      "examples": {
+        "invalid": [
+          "// app/layout.tsx\n<link href='https://fonts.googleapis.com/css2?family=Inter' rel='stylesheet' />"
+        ],
+        "valid": [
+          "import { Inter } from 'next/font/google'\nconst inter = Inter({ subsets: ['latin'], variable: '--font-inter' })\nexport default function RootLayout({ children }) { return <html className={inter.variable}><body>{children}</body></html> }"
+        ]
+      }
+    },
+    {
+      "id": "PF-004",
+      "title": "Use next/script to Load Third-Party Scripts Without Blocking Rendering",
+      "problem": "Including third-party scripts (analytics, chat widgets, ad pixels) via raw <script> tags in the document head blocks HTML parsing and delays First Contentful Paint (FCP) and Largest Contentful Paint (LCP).",
+      "whyItMatters": "Render-blocking scripts are one of the most impactful causes of poor Web Vitals. Every millisecond spent downloading and executing a third-party script delays the first pixel painted to the user's screen. next/script provides declarative loading strategies (afterInteractive, lazyOnload, worker) that defer non-critical scripts until after the page is interactive.",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "<script src='https://analytics.example.com/script.js'> in the <head> without defer or async",
+        "<script> tags in layout.tsx without next/script",
+        "Loading analytics or tracking pixels synchronously in the head",
+        "The worker strategy for scripts in the App Router (not supported; use afterInteractive or lazyOnload)"
+      ],
+      "allowedPatterns": [
+        "<Script src={url} strategy='afterInteractive' /> for analytics that need to load after page becomes interactive",
+        "<Script src={url} strategy='lazyOnload' /> for chat widgets and non-critical scripts",
+        "<Script src={url} strategy='beforeInteractive' /> only for scripts that must run before hydration (rare)",
+        "Using the onLoad callback for scripts that require post-load initialization"
+      ],
+      "productionRisks": [
+        "Render-blocking scripts significantly degrading FCP and LCP",
+        "Poor Core Web Vitals scores from slow third-party scripts",
+        "Main thread blocking from synchronous script execution during parse"
+      ],
+      "architectureImplications": [
+        "Third-party script loading strategy is an architectural decision; choose the most deferred strategy that meets the script's requirements",
+        "afterInteractive is the safe default for most analytics and tracking scripts"
+      ],
+      "optimizationGuidance": [
+        "Audit all third-party scripts and assign the most deferred strategy possible",
+        "Monitor third-party script impact on Web Vitals using Lighthouse and Chrome User Experience Report (CrUX)"
+      ],
+      "quickFixes": [
+        "Replace <script src='...'> with <Script src='...' strategy='afterInteractive' /> from 'next/script'"
+      ],
+      "architectureSuggestions": [
+        "Evaluate whether every third-party script is actually required; each one adds risk to Web Vitals. Remove unused scripts."
+      ],
+      "examples": {
+        "invalid": [
+          "<head><script src='https://analytics.example.com/track.js'></script></head> // Render-blocking"
+        ],
+        "valid": [
+          "import Script from 'next/script'\n<Script src='https://analytics.example.com/track.js' strategy='afterInteractive' />"
+        ]
+      }
+    },
+    {
+      "id": "PF-005",
+      "title": "Lazy Load Non-Critical Client Components with next/dynamic",
+      "problem": "All Client Components referenced in a route's module graph are bundled together and loaded upfront, even if some components are only visible after user interaction (modals, drawers, tooltips, advanced settings panels).",
+      "whyItMatters": "Components that are not visible on initial load (modals, accordions, tabs not in the default tab) can defer their JavaScript download until needed. next/dynamic enables code-splitting at the component level, reducing the initial JavaScript payload and improving TTI.",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "Statically importing large modal or drawer components that are conditionally shown",
+        "Statically importing rich text editors, code editors, or complex chart libraries for features behind interactions",
+        "Not using next/dynamic for components heavier than 50KB that are not immediately visible"
+      ],
+      "allowedPatterns": [
+        "const Modal = dynamic(() => import('./modal'), { loading: () => <Skeleton />, ssr: true }) for heavy conditionally-shown components",
+        "Lazy loading rich text editors, code editors, PDF viewers, map components",
+        "Using the loading prop to provide a meaningful placeholder during dynamic import resolution"
+      ],
+      "productionRisks": [
+        "Inflated initial JavaScript bundle from eagerly loading non-critical components",
+        "Poor TTI from unnecessary JavaScript parsing and execution",
+        "Wasted bandwidth for users who never trigger the condition to show the lazy-loaded component"
+      ],
+      "architectureImplications": [
+        "Code splitting is an explicit architectural decision in Next.js; it requires using next/dynamic to opt in at the component level",
+        "Server Components provide route-level code splitting automatically; Client Components require explicit dynamic() for component-level splitting"
+      ],
+      "optimizationGuidance": [
+        "Identify the top 5 heaviest Client Components via @next/bundle-analyzer and evaluate lazy loading each",
+        "Default to dynamic() for any Client Component that contains a library import heavier than 30KB"
+      ],
+      "quickFixes": [
+        "Wrap the import: const HeavyComponent = dynamic(() => import('./heavy'), { loading: () => <Skeleton /> })"
+      ],
+      "architectureSuggestions": [
+        "Establish a rule: any Client Component with a unique library dependency exceeding 30KB gzipped must use dynamic() unless it is above-the-fold and critical path"
+      ],
+      "examples": {
+        "invalid": [
+          "import RichTextEditor from './rich-text-editor' // 200KB library, loaded for all users even if they never edit"
+        ],
+        "valid": [
+          "import dynamic from 'next/dynamic'\nconst RichTextEditor = dynamic(() => import('./rich-text-editor'), { loading: () => <Skeleton className='h-64' />, ssr: false })"
+        ]
+      }
+    },
+    {
+      "id": "PF-006",
+      "title": "Request-time APIs in Root Layout Degrade the Entire Application's Performance",
+      "problem": "Using cookies(), headers(), or searchParams in the root layout.tsx without Suspense wrapping forces the entire application into dynamic rendering, eliminating all prerendering benefits for every route.",
+      "whyItMatters": "The root layout wraps every route in the application. Any dynamic rendering opt-in at the root layout level propagates to all child routes. A single cookies() call in app/layout.tsx without Suspense means zero static HTML is served for any route — every page view requires server compute.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "cookies() in app/layout.tsx at the top level without Suspense",
+        "headers() in app/layout.tsx at the top level without Suspense",
+        "useSearchParams() in a component imported by app/layout.tsx without Suspense",
+        "Any runtime data access at the root layout level without Suspense isolation"
+      ],
+      "allowedPatterns": [
+        "Wrapping runtime API consumers in Suspense in the root layout",
+        "Using Partial Prerendering (PPR) to keep the static shell while streaming dynamic sections",
+        "Reading cookies in a deep child component wrapped in Suspense rather than the layout"
+      ],
+      "productionRisks": [
+        "Entire application becomes dynamically rendered, destroying CDN cacheability",
+        "Every page view incurs server compute cost regardless of content type",
+        "TTFB degrades from CDN-level to server-compute-level for every route"
+      ],
+      "architectureImplications": [
+        "Root layout should be static or nearly static",
+        "Per-user customization belongs in child route segments wrapped in Suspense, not the root layout"
+      ],
+      "optimizationGuidance": [
+        "Audit app/layout.tsx for any runtime API usage and extract it into a child component wrapped in Suspense"
+      ],
+      "quickFixes": [
+        "Extract the cookies() call into a child component: <Suspense fallback={<StaticUI />}><DynamicContent /></Suspense>"
+      ],
+      "architectureSuggestions": [
+        "Design the root layout as a static skeleton (HTML structure, fonts, global providers) with dynamic user-specific content loaded lazily in child segments"
+      ],
+      "examples": {
+        "invalid": [
+          "// app/layout.tsx — makes ENTIRE app dynamic\nimport { cookies } from 'next/headers'\nexport default async function RootLayout({ children }) { const locale = (await cookies()).get('locale')?.value; return <html lang={locale}><body>{children}</body></html> }"
+        ],
+        "valid": [
+          "// app/layout.tsx — static shell\nexport default function RootLayout({ children }) { return <html lang='en'><body><Suspense fallback={null}><LocaleProvider /></Suspense>{children}</body></html> }"
+        ]
+      }
+    }
+  ]
+}

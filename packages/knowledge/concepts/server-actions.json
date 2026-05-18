@@ -1,0 +1,248 @@
+{
+  "concept": "Server Actions",
+  "category": "architecture",
+  "description": "Server Actions are asynchronous functions marked with the 'use server' directive that execute on the server. They are the Next.js-native mechanism for handling form submissions, data mutations, and any server-side logic triggered from the client. Server Actions are invoked from Client Components (via event handlers or form actions) and Server Components (via form actions). They receive FormData or typed arguments, execute server-side, and can revalidate caches, redirect, set cookies, and perform database operations. Server Actions are automatically exposed as POST endpoints by Next.js — they require authentication and authorization validation inside every action.",
+
+  "constraints": [
+    {
+      "id": "SA-001",
+      "title": "Every Server Action Must Validate Authentication and Authorization",
+      "problem": "Server Actions are automatically exposed as POST endpoints accessible from the internet. Without authentication and authorization checks inside every action, unauthenticated or unauthorized users can invoke them directly.",
+      "whyItMatters": "Next.js does not automatically protect Server Actions behind authentication. Layout- or page-level session checks are bypassed when actions are called directly. Every action must be treated as a public API endpoint and independently verify that the caller is authenticated and has permission to perform the requested operation.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "Server Actions with no session or authentication check",
+        "Relying on layout.tsx or page.tsx authentication guards to protect Server Action invocations",
+        "Relying on middleware authentication alone without per-action checks",
+        "Performing database mutations before verifying the user's identity and permission",
+        "Trusting client-supplied user IDs without server-side verification",
+        "Server Actions that accept an adminFlag from formData without verifying server-side role"
+      ],
+      "allowedPatterns": [
+        "Calling getSession() or auth() at the top of every Server Action before any mutation",
+        "Returning early with an error object if the session is invalid",
+        "Verifying that the authenticated user owns the resource being mutated",
+        "Using Zod or similar schema validation on all inputs before mutation",
+        "Centralizing auth checks in a DAL (Data Access Layer) called by all actions"
+      ],
+      "productionRisks": [
+        "Unauthorized data mutations by unauthenticated users",
+        "Privilege escalation attacks",
+        "Mass data deletion or corruption",
+        "Regulatory compliance violations (GDPR, SOC2)",
+        "Security audit failures"
+      ],
+      "architectureImplications": [
+        "Every Server Action is an implicit API endpoint and must be designed with that security posture",
+        "A Data Access Layer (DAL) enforces authorization centrally, reducing per-action boilerplate",
+        "Server Actions should perform the minimum mutation necessary and return minimal data"
+      ],
+      "optimizationGuidance": [
+        "Create an authenticated action wrapper that injects verified session into all actions",
+        "Use a DAL that performs authorization checks before any database access"
+      ],
+      "quickFixes": [
+        "Add const session = await getSession(); if (!session) return { error: 'Unauthorized' }; at the top of every action"
+      ],
+      "architectureSuggestions": [
+        "Create a createAction(handler) wrapper that enforces authentication, input validation (Zod), and error handling as cross-cutting concerns",
+        "Never pass user IDs from the client; always derive the acting user's identity from the server-side session"
+      ],
+      "examples": {
+        "invalid": [
+          "async function deletePost(id: string) { 'use server'; await db.post.delete({ where: { id } }) } // No auth check!"
+        ],
+        "valid": [
+          "async function deletePost(id: string) { 'use server'; const session = await getSession(); if (!session) return { error: 'Unauthorized' }; const post = await db.post.findUnique({ where: { id } }); if (post.authorId !== session.userId) return { error: 'Forbidden' }; await db.post.delete({ where: { id } }); revalidateTag('posts') }"
+        ]
+      }
+    },
+    {
+      "id": "SA-002",
+      "title": "Server Action Arguments and Return Values Must Be Serializable",
+      "problem": "Server Actions receive arguments and return values that must cross the server/client boundary via the RSC serialization protocol. Non-serializable types cannot be passed to or returned from Server Actions.",
+      "whyItMatters": "The communication channel between client invocation and server execution uses the same serialization protocol as the RSC Payload. Passing or returning class instances, functions, Symbols, or circular references will cause serialization errors at runtime.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "Returning class instances from Server Actions",
+        "Returning Error class instances directly (return plain error objects instead)",
+        "Passing functions as arguments to Server Actions",
+        "Passing class instances as arguments",
+        "Returning database model instances (ORM objects) instead of plain DTOs",
+        "Returning circular reference objects"
+      ],
+      "allowedPatterns": [
+        "Returning plain success/error objects: { success: true, data: { id: '...' } } or { error: 'message' }",
+        "Receiving FormData (natively serializable for form actions)",
+        "Receiving primitive types: strings, numbers, booleans",
+        "Receiving plain objects and arrays of serializable values",
+        "Using useActionState (React 19) to manage action state in the client"
+      ],
+      "productionRisks": [
+        "Runtime serialization errors crashing the action invocation",
+        "Broken form submissions in production",
+        "Type errors that only appear at runtime, not at compile time"
+      ],
+      "architectureImplications": [
+        "Server Actions reinforce DTO boundaries: map database records to plain objects before returning",
+        "Error handling should use structured return values, not thrown Error instances, for client-consumable error state"
+      ],
+      "optimizationGuidance": [
+        "Define explicit TypeScript return type interfaces for all Server Actions",
+        "Always map ORM results to plain POJOs before returning from Server Actions"
+      ],
+      "quickFixes": [
+        "Return { success: true, data: plainObject } instead of the ORM instance",
+        "For errors, return { success: false, error: 'message' } instead of throwing"
+      ],
+      "architectureSuggestions": [
+        "Define ActionResult<T> = { success: true; data: T } | { success: false; error: string } as a standard return type across all Server Actions"
+      ],
+      "examples": {
+        "invalid": [
+          "async function createUser(data) { 'use server'; const user = await db.user.create({ data }); return user; // ORM instance, not serializable }"
+        ],
+        "valid": [
+          "async function createUser(data) { 'use server'; const user = await db.user.create({ data }); return { success: true, data: { id: user.id, name: user.name, email: user.email } } }"
+        ]
+      }
+    },
+    {
+      "id": "SA-003",
+      "title": "Server Actions Must Not Be Used for Read Operations",
+      "problem": "Server Actions are semantically and architecturally designed for mutations (writes). Using them for data fetching (reads) is an anti-pattern that bypasses the caching system and adds unnecessary POST request overhead.",
+      "whyItMatters": "Server Actions are invoked via POST requests and are never cached. Using a Server Action to fetch data means every read triggers a non-cacheable POST request to the server, eliminating any possibility of data caching, static prerendering, or ISR for that data. Server Components with async/await are the correct tool for server-side reads.",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "Using a Server Action to fetch and return data for display in a Client Component",
+        "Calling a Server Action on component mount (useEffect) to load initial data",
+        "Using Server Actions as a replacement for Route Handlers for GET requests"
+      ],
+      "allowedPatterns": [
+        "Server Components with async/await for all data reads",
+        "Route Handlers (GET) for data that Client Components must fetch dynamically",
+        "Server Actions exclusively for: form submissions, database mutations, cache revalidation, redirects, cookie operations"
+      ],
+      "productionRisks": [
+        "Uncacheable data reads increasing server load",
+        "Performance degradation from POST overhead for read operations",
+        "Loss of static generation opportunities"
+      ],
+      "architectureImplications": [
+        "The read/write separation is architecturally significant in Next.js: Server Components handle reads, Server Actions handle writes",
+        "This separation enables the caching system to function correctly"
+      ],
+      "optimizationGuidance": [
+        "Perform all data reads in Server Components; pass data as props to Client Components",
+        "Use Route Handlers for truly dynamic client-side reads (user interactions, real-time)"
+      ],
+      "quickFixes": [
+        "Move the data-fetching logic out of the Server Action and into the parent Server Component"
+      ],
+      "architectureSuggestions": [
+        "Enforce a naming convention: actions/*.ts for mutations (Server Actions), lib/data/*.ts for reads (called from Server Components)"
+      ],
+      "examples": {
+        "invalid": [
+          "'use client'\nimport { getUsers } from './actions'\nuseEffect(() => { getUsers().then(setUsers) }, []) // Anti-pattern: Server Action for reads"
+        ],
+        "valid": [
+          "// page.tsx (Server Component)\nconst users = await getUsers() // Direct async call, cached, prerendered\nreturn <UserList users={users} />"
+        ]
+      }
+    },
+    {
+      "id": "SA-004",
+      "title": "Server Actions Must Validate Input with Schema Validation",
+      "problem": "Server Actions that accept user input and write to databases without schema validation are vulnerable to unexpected data types, SQL injection (via ORM misuse), and application crashes from malformed input.",
+      "whyItMatters": "Client-side validation is easily bypassed. Server Actions receive raw client input that must be treated as untrusted. Without server-side validation, malformed or malicious input can corrupt data, crash the application, or create security vulnerabilities.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "Writing formData.get('field') directly to a database without type coercion or validation",
+        "Trusting client-supplied type information",
+        "Using parseInt() or parseFloat() without validating the input is actually a number",
+        "Accepting user input into database queries without parameterization (ORM misuse)",
+        "Skipping validation because client-side validation already exists"
+      ],
+      "allowedPatterns": [
+        "Using Zod schema.safeParse() or schema.parse() on all action inputs",
+        "Using Valibot or similar typed validation libraries",
+        "Returning validation errors as structured ActionResult objects for client display",
+        "Using FormData with Zod by calling formData.get() inside the schema coercion"
+      ],
+      "productionRisks": [
+        "Data corruption from unexpected input types",
+        "Application crashes from null/undefined access on unvalidated fields",
+        "Security vulnerabilities from unvalidated user-supplied data",
+        "Inconsistent database state"
+      ],
+      "architectureImplications": [
+        "Input validation is a mandatory cross-cutting concern for all Server Actions",
+        "Validation errors should be returned (not thrown) for graceful client-side display"
+      ],
+      "optimizationGuidance": [
+        "Define Zod schemas adjacent to their Server Actions for co-location of input contracts",
+        "Reuse validation schemas for both client-side and server-side validation"
+      ],
+      "quickFixes": [
+        "Add const result = schema.safeParse(Object.fromEntries(formData)); if (!result.success) return { errors: result.error.flatten() } at the start of every action"
+      ],
+      "architectureSuggestions": [
+        "Create a validateInput<T>(schema, data) utility that standardizes validation error responses across all Server Actions"
+      ],
+      "examples": {
+        "invalid": [
+          "async function createPost(formData: FormData) { 'use server'; await db.post.create({ data: { title: formData.get('title'), content: formData.get('content') } }) // Unvalidated input directly to DB }"
+        ],
+        "valid": [
+          "const schema = z.object({ title: z.string().min(1).max(200), content: z.string().min(10) })\nasync function createPost(formData: FormData) { 'use server'; const result = schema.safeParse({ title: formData.get('title'), content: formData.get('content') }); if (!result.success) return { errors: result.error.flatten() }; await db.post.create({ data: result.data }); revalidateTag('posts') }"
+        ]
+      }
+    },
+    {
+      "id": "SA-005",
+      "title": "Use Server Actions for Mutations, Not Inline Route Handler Calls",
+      "problem": "Using fetch('/api/...') from Client Components to perform mutations that could be handled directly by Server Actions adds unnecessary boilerplate, increases round-trip overhead, and bypasses the cache invalidation integration of Server Actions.",
+      "whyItMatters": "Server Actions are invoked via a direct RPC-like mechanism that is more efficient than a full HTTP API call, type-safe through the TypeScript boundary, and automatically integrated with Next.js's revalidation system. Using Route Handlers for mutations that have no external consumer adds needless complexity.",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "fetch('/api/update-post', { method: 'POST', body: JSON.stringify(data) }) from a Client Component when a Server Action would suffice",
+        "Creating Route Handlers for simple CRUD mutations consumed only by the same Next.js app",
+        "Manually calling revalidatePath after a fetch mutation in a Client Component"
+      ],
+      "allowedPatterns": [
+        "Server Actions for all internal mutations (form submissions, button actions, CRUD operations)",
+        "Route Handlers for external API consumers (mobile apps, third-party webhooks, public APIs)",
+        "Route Handlers for streaming responses or SSE",
+        "Route Handlers for GET requests that must be publicly accessible as API endpoints"
+      ],
+      "productionRisks": [
+        "Unnecessary API boilerplate that must be maintained",
+        "Cache invalidation must be manually triggered from Route Handlers (does not clear Router Cache automatically)",
+        "Type safety lost across the HTTP boundary"
+      ],
+      "architectureImplications": [
+        "Route Handlers are for external API consumers; Server Actions are for internal UI mutations",
+        "Server Actions provide type safety across the server/client boundary that Route Handlers cannot"
+      ],
+      "optimizationGuidance": [
+        "Replace internal fetch-to-API mutations with Server Actions",
+        "Maintain Route Handlers only for endpoints that have or will have external consumers"
+      ],
+      "quickFixes": [
+        "Convert the mutation logic from a Route Handler into a Server Action and call it directly from the form or Client Component event handler"
+      ],
+      "architectureSuggestions": [
+        "Establish a rule: Route Handlers are public API surface; Server Actions are internal mutations. Document the distinction in the project's architecture decision records."
+      ],
+      "examples": {
+        "invalid": [
+          "'use client'\nasync function handleSubmit(data) { await fetch('/api/create-post', { method: 'POST', body: JSON.stringify(data) }); router.refresh() }"
+        ],
+        "valid": [
+          "// actions/posts.ts\nasync function createPost(formData: FormData) { 'use server'; /* validate, mutate, revalidate */ }\n// Client Component\n<form action={createPost}>...</form>"
+        ]
+      }
+    }
+  ]
+}

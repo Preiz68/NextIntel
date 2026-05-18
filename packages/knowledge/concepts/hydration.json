@@ -1,123 +1,198 @@
 {
   "concept": "Hydration",
-  "category": "rendering",
-  "description": "React's process of attaching event handlers and client-side state to server-rendered HTML, making the static markup interactive. In Next.js App Router, hydration applies only to Client Components. The server-rendered HTML must be byte-for-byte consistent with the initial client render output — any mismatch is a hydration error.",
+  "category": "hydration",
+  "description": "Hydration is React's process of attaching event handlers to the server-rendered HTML DOM to make the application interactive. In Next.js App Router, only Client Components are hydrated — Server Components are never hydrated and have no client-side JavaScript. On the initial page load, Next.js serves pre-rendered HTML immediately, then the RSC Payload reconciles the component tree, and finally JavaScript hydrates Client Components. Hydration mismatches occur when the server-rendered HTML does not match what React produces during the first client render pass, causing React to either throw an error or re-render with warnings.",
 
   "constraints": [
-    "Server-rendered HTML output of a Client Component must exactly match its initial client-rendered output",
-    "Dynamic values that differ between server and client (Date.now(), Math.random(), browser dimensions) must not be rendered during SSR if they differ from the client value",
-    "Hydration applies only to Client Components — Server Components are not hydrated (they have no client-side React lifecycle)",
-    "The client JavaScript bundle must be downloaded and parsed before hydration can begin",
-    "useLayoutEffect is deferred until after hydration on the client — server emits a warning if used where SSR output would differ",
-    "Components using browser APIs (window, document) must be guarded with typeof window !== 'undefined' or mounted-state checks if rendered during SSR",
-    "React context consumed in Client Components must receive the same initial value on server and client"
-  ],
-
-  "allowedPatterns": [
-    "Rendering static, deterministic content on the server that is identical to the client's initial render",
-    "Using suppressHydrationWarning on elements with known intentional server/client differences (e.g. browser extension injected attributes)",
-    "Deferring browser-API-dependent rendering to useEffect (runs only after hydration) or to a mounted state flag",
-    "Using React.lazy() with Suspense to defer hydration of non-critical interactive components",
-    "Using dynamic() with ssr: false for components that are entirely incompatible with SSR",
-    "Wrapping dynamic values in useEffect to update after hydration without causing mismatch",
-    "Using the React use() API with a promise passed from a Server Component to stream and hydrate data progressively"
-  ],
-
-  "forbiddenPatterns": [
-    "Rendering Date.now() or new Date() directly in JSX of a Client Component — server and client timestamps differ",
-    "Rendering Math.random() or crypto.randomUUID() inline in JSX — produces different values on server and client",
-    "Accessing window, document, or screen properties during the render phase of a Client Component",
-    "Rendering different content based on typeof window check during the render phase — produces HTML that mismatches client output",
-    "Using localStorage or sessionStorage during render — not available during server-side prerender",
-    "Mutating the DOM directly during render — bypasses React's reconciliation and breaks hydration",
-    "Importing and using browser-only libraries at module scope in Client Components that are SSR'd"
-  ],
-
-  "runtimeBehavior": [
-    "Step 1 (server): Client Components are prerendered into static HTML — React runs once to produce markup, no event handlers",
-    "Step 2 (client, first load): Browser receives HTML and displays it immediately as non-interactive content (FCP)",
-    "Step 3 (client): RSC Payload is used to reconcile the Server and Client Component trees",
-    "Step 4 (client): React downloads Client Component JavaScript chunks and executes them",
-    "Step 5 (client): React 'hydrates' the existing HTML by attaching event handlers and initializing state — DOM is not re-created",
-    "If server HTML matches client output exactly: hydration is silent and seamless",
-    "If server HTML does NOT match client output: React logs a hydration mismatch warning in development and attempts recovery in production — may cause visual flicker or incorrect UI state",
-    "Hydration happens synchronously from the root — blocking the main thread during processing",
-    "Streaming partial hydration: Suspense boundaries allow progressive hydration — each boundary hydrates independently as its content arrives",
-    "Subsequent client-side navigations: Client Components are rendered entirely on client without SSR — hydration only occurs on first load or full page refresh"
-  ],
-
-  "architectureImplications": [
-    "Server Components are never hydrated — they have no client runtime cost after initial HTML delivery",
-    "Minimizing Client Component surface area directly reduces hydration work and Time to Interactive (TTI)",
-    "Suspense boundaries create independent hydration units — use them to defer hydration of below-the-fold content",
-    "The RSC Payload is the mechanism that allows React to hydrate without re-fetching server data",
-    "dynamic({ ssr: false }) completely removes a component from SSR and hydration — use for browser-only widgets",
-    "next/dynamic with ssr: false increases FCP for the deferred component — trade-off between SSR consistency and compatibility",
-    "Hydration errors in production are difficult to detect without monitoring — they may silently produce incorrect UI"
-  ],
-
-  "performanceImplications": [
-    "Hydration blocks interactivity — Time to Interactive (TTI) is delayed until all Client Component JS is parsed and hydration completes",
-    "Large Client Component trees with many event handlers increase hydration duration",
-    "Streaming with Suspense enables partial hydration — above-the-fold content becomes interactive before below-the-fold content is even received",
-    "Reducing Client Component count and size directly reduces hydration cost",
-    "dynamic() with lazy loading defers JS download until needed — reduces initial bundle but delays hydration of the lazy component",
-    "Hydration mismatch recovery is expensive — React re-renders the mismatched subtree on the client",
-    "RSC Payload size directly affects client navigation performance — large Server Component trees produce larger payloads"
-  ],
-
-  "commonMisusePatterns": [
-    "Rendering new Date().toLocaleDateString() in a Client Component without accounting for timezone/locale differences between server and client",
-    "Using Math.random() to generate element keys or IDs in JSX — different on each render, causes mismatch",
-    "Checking typeof window !== 'undefined' to conditionally render content — returns false on server, true on client, guarantees mismatch",
-    "Reading localStorage or cookies directly during render instead of in useEffect",
-    "Using a third-party library that accesses window at import time without wrapping in dynamic({ ssr: false })",
-    "Not suppressing hydration warnings on elements intentionally different (e.g. elements modified by browser extensions)",
-    "Assuming useLayoutEffect behavior is consistent between server and client — it is suppressed on server and fires synchronously after paint on client"
-  ],
-
-  "productionRisks": [
-    "Silent UI corruption: hydration mismatches in production do not throw — React attempts to recover, potentially leaving the UI in an incorrect state that is invisible to developers",
-    "Visual flicker: mismatch recovery causes a visible re-render flash on first load, degrading perceived performance",
-    "SEO impact: crawlers see server HTML; if hydration alters content, the visible and indexed content diverge",
-    "Time to Interactive regression: oversized client bundles from unnecessary Client Component usage delay hydration and TTI",
-    "Hydration errors in deeply nested components are hard to trace — the error message often points to the root boundary, not the offending component",
-    "Browser extension interference: extensions that inject attributes or text nodes into the DOM cause spurious hydration warnings — suppressHydrationWarning is the correct mitigation"
-  ],
-
-  "relatedConcepts": [
-    "Client Components",
-    "Server Components",
-    "RSC Payload",
-    "Streaming",
-    "Suspense",
-    "Partial Prerendering (PPR)",
-    "Static Rendering",
-    "Time to Interactive (TTI)",
-    "First Contentful Paint (FCP)",
-    "next/dynamic",
-    "suppressHydrationWarning"
-  ],
-
-  "examples": {
-    "valid": [
-      "// Deferred browser-API access via useEffect — no hydration mismatch\n'use client'\nimport { useState, useEffect } from 'react'\nexport default function WindowSize() {\n  const [width, setWidth] = useState(0)  // safe initial value for SSR\n  useEffect(() => {\n    setWidth(window.innerWidth)  // runs only after hydration\n  }, [])\n  return <div>Width: {width}</div>\n}",
-
-      "// Stable client-generated ID using useId — consistent across server and client\n'use client'\nimport { useId } from 'react'\nexport default function Field({ label }) {\n  const id = useId()  // deterministic, consistent between server and client\n  return <><label htmlFor={id}>{label}</label><input id={id} /></>\n}",
-
-      "// SSR-incompatible component excluded from hydration entirely\nimport dynamic from 'next/dynamic'\nconst HeavyChart = dynamic(() => import('./heavy-chart'), { ssr: false })\nexport default function Dashboard() {\n  return <HeavyChart />  // not SSR'd, not hydrated on first load\n}",
-
-      "// suppressHydrationWarning for intentional server/client difference\nexport default function LastUpdated() {\n  return (\n    <time suppressHydrationWarning dateTime={new Date().toISOString()}>\n      {new Date().toLocaleDateString()}\n    </time>\n  )\n}"
-    ],
-
-    "invalid": [
-      "// Math.random() in render — different on server and client\n'use client'\nexport default function Card() {\n  const id = Math.random()  // MISMATCH: different values each render\n  return <div id={id}>Content</div>\n}",
-
-      "// typeof window check during render — guaranteed mismatch\n'use client'\nexport default function Component() {\n  const isClient = typeof window !== 'undefined'  // false on server, true on client\n  return <div>{isClient ? 'Browser' : 'Server'}</div>  // MISMATCH\n}",
-
-      "// localStorage access during render — throws on server\n'use client'\nexport default function Settings() {\n  const theme = localStorage.getItem('theme')  // ReferenceError on server\n  return <div className={theme}>Settings</div>\n}",
-
-      "// Direct Date rendering — timezone mismatch between server and client\n'use client'\nexport default function Timestamp() {\n  return <span>{new Date().toLocaleTimeString()}</span>  // MISMATCH: server ≠ client time\n}"
-    ]
-  }
+    {
+      "id": "HY-001",
+      "title": "Server and Client Render Output Must Match on First Render",
+      "problem": "If a Client Component renders different content on the server (during pre-rendering) versus the first client render (during hydration), a hydration mismatch error occurs.",
+      "whyItMatters": "React compares the server-rendered HTML with the virtual DOM produced during hydration. Any difference causes React to either throw an error in development or silently re-render in production, discarding the server-rendered HTML and replacing it with a fully client-rendered version. This defeats the purpose of SSR, causes visual flashes (FOUC), and destroys performance metrics like LCP and CLS.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "typeof window !== 'undefined' checks in render return paths",
+        "typeof window === 'undefined' conditional rendering",
+        "new Date() or Date.now() without suppression or client-only deferred rendering",
+        "Math.random() in render output",
+        "crypto.randomUUID() in render output without connection() guard",
+        "localStorage.getItem() in the render return",
+        "navigator.userAgent checks in render output",
+        "Rendering different content based on window.innerWidth in the initial render",
+        "Rendering content based on screen.width in the initial render",
+        "iOS/Safari auto-detection changing rendered HTML",
+        "CDN or proxy HTML minification that changes attribute order",
+        "Browser extensions injecting nodes into the DOM"
+      ],
+      "allowedPatterns": [
+        "useEffect with state update for client-only values (renders consistently on server, then updates on client)",
+        "suppressHydrationWarning={true} on elements with inevitably dynamic content (timestamps)",
+        "next/dynamic with ssr: false for components that cannot render consistently on the server",
+        "connection() from next/server before non-deterministic operations",
+        "Storing client-only values in state initialized after mount"
+      ],
+      "productionRisks": [
+        "Visual flash (FOUC) as server HTML is discarded and client re-renders",
+        "Degraded LCP and CLS Core Web Vital scores",
+        "Infinite re-render loops in edge cases",
+        "Console errors that confuse monitoring dashboards",
+        "SEO impact from inconsistent initial HTML"
+      ],
+      "architectureImplications": [
+        "Client Components must be designed to render the same output server-side and client-side on first render",
+        "Client-only state must be initialized to a server-safe default, then updated via useEffect"
+      ],
+      "optimizationGuidance": [
+        "Initialize all state with server-safe defaults (null, empty string, false) and populate client-specific values in useEffect",
+        "Use suppressHydrationWarning sparingly and only for truly unavoidable cases like formatted timestamps"
+      ],
+      "quickFixes": [
+        "Replace typeof window checks with a mounted state: const [mounted, setMounted] = useState(false); useEffect(() => setMounted(true), [])",
+        "Add suppressHydrationWarning={true} to elements with dynamic timestamps",
+        "Use next/dynamic with ssr: false for components that fundamentally cannot match server output"
+      ],
+      "architectureSuggestions": [
+        "Design Client Components to be 'isomorphic by default': the initial render should always produce the same output server and client",
+        "Treat client-specific personalization as a post-hydration concern: render a generic shell server-side, then update with user-specific data after mount"
+      ],
+      "examples": {
+        "invalid": [
+          "'use client'\nexport default function Greeting() { if (typeof window !== 'undefined') { return <p>Hello, {localStorage.getItem('name')}</p> } return <p>Hello</p> }"
+        ],
+        "valid": [
+          "'use client'\nimport { useState, useEffect } from 'react'\nexport default function Greeting() { const [name, setName] = useState(''); useEffect(() => { setName(localStorage.getItem('name') || '') }, []); return <p>Hello{name ? `, ${name}` : ''}</p> }"
+        ]
+      }
+    },
+    {
+      "id": "HY-002",
+      "title": "Only Client Components Are Hydrated",
+      "problem": "Developers may expect Server Components to be hydrated (interactive) on the client, but Server Components produce no JavaScript bundle and are never hydrated.",
+      "whyItMatters": "Server Components render only to the RSC Payload and static HTML. They have no associated JavaScript on the client. This is a feature, not a limitation, but misunderstanding it leads to attempts to add interactivity to Server Components, which silently fails. Event handlers on Server Components are no-ops.",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "Expecting onClick on a Server Component to work",
+        "Assuming useEffect runs in a Server Component",
+        "Assuming window is available after a Server Component 'renders' on the client",
+        "Using refs in Server Components to manipulate the DOM"
+      ],
+      "allowedPatterns": [
+        "Server Components produce HTML that is immediately visible without JavaScript",
+        "Hydration only occurs for Client Components within the page",
+        "Selective hydration: React prioritizes hydrating components the user interacts with first"
+      ],
+      "productionRisks": [
+        "Non-functional interactive elements if event handlers are placed on Server Components",
+        "Confusion in debugging when expected effects do not run"
+      ],
+      "architectureImplications": [
+        "The hydration boundary is precisely the 'use client' directive",
+        "Large pages with few Client Components hydrate very quickly because there is minimal JavaScript to process",
+        "Streaming + selective hydration means React can make individual Client Component islands interactive progressively"
+      ],
+      "optimizationGuidance": [
+        "Maximize Server Component surface area to minimize hydration work",
+        "Use Suspense boundaries to allow React to stream and selectively hydrate components as they arrive"
+      ],
+      "quickFixes": [],
+      "architectureSuggestions": [
+        "Design for 'minimal hydration surface': the less Client Component code there is, the faster and more reliable hydration becomes",
+        "Use streaming with Suspense so the browser can start hydrating arrived components while others are still loading"
+      ],
+      "examples": {
+        "invalid": [],
+        "valid": []
+      }
+    },
+    {
+      "id": "HY-003",
+      "title": "Avoid Disabling SSR for Core UI Components",
+      "problem": "Using next/dynamic with ssr: false disables server-side pre-rendering for a component, producing an empty placeholder in the initial HTML that is filled in only after JavaScript loads.",
+      "whyItMatters": "Disabling SSR for components causes a blank flicker during load, harms LCP, and removes the component's content from the initial HTML served to crawlers and users. It should only be used as a last resort for components that fundamentally cannot render server-side (browser-API-only widgets).",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "next/dynamic with ssr: false for components that could be made isomorphic",
+        "next/dynamic with ssr: false for above-the-fold content",
+        "next/dynamic with ssr: false for content that is important for SEO",
+        "Using ssr: false as a blanket solution for hydration mismatches instead of fixing the root cause"
+      ],
+      "allowedPatterns": [
+        "next/dynamic with ssr: false for widgets that are purely decorative and below the fold",
+        "next/dynamic with ssr: false for third-party scripts that only work in browser (maps, rich text editors)",
+        "next/dynamic with ssr: false as a last resort after all other hydration mismatch fixes are exhausted"
+      ],
+      "productionRisks": [
+        "Degraded LCP for above-the-fold content",
+        "Cumulative Layout Shift (CLS) from late-loading components",
+        "Missing content in search engine crawler HTML"
+      ],
+      "architectureImplications": [
+        "The default should always be server-rendered; ssr: false is an explicit override with known trade-offs",
+        "Loading skeletons should be provided via the loading prop when using dynamic() with ssr: false"
+      ],
+      "optimizationGuidance": [
+        "Fix hydration mismatches at their root (use the mounted pattern or suppressHydrationWarning) rather than disabling SSR",
+        "Reserve ssr: false for truly browser-only widgets"
+      ],
+      "quickFixes": [
+        "If using ssr: false for a mismatch, investigate the mismatch cause first: likely a typeof window check or Date.now() in render"
+      ],
+      "architectureSuggestions": [
+        "Establish a rule: ssr: false requires a code comment explaining why SSR is impossible for that component"
+      ],
+      "examples": {
+        "invalid": [
+          "const UserGreeting = dynamic(() => import('./greeting'), { ssr: false }) // Causes LCP degradation for important above-fold content"
+        ],
+        "valid": [
+          "const MapWidget = dynamic(() => import('./map'), { ssr: false, loading: () => <div className='map-skeleton' /> }) // Justified: map uses browser-only WebGL"
+        ]
+      }
+    },
+    {
+      "id": "HY-004",
+      "title": "Invalid HTML Nesting Causes Hydration Errors",
+      "problem": "Nesting HTML elements in ways that the HTML spec does not allow (e.g., <p> inside <p>, <div> inside <p>, <a> inside <a>, <button> inside <button>) causes the browser to auto-correct the DOM structure, producing a mismatch with React's virtual DOM.",
+      "whyItMatters": "Browsers silently fix invalid HTML during parsing, moving or removing elements. React expects the DOM to match the server-rendered HTML exactly. The browser's auto-correction produces a DOM that differs from both the server HTML and React's expected tree, triggering hydration errors.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "<div> nested inside <p>",
+        "<p> nested inside <p>",
+        "<a> nested inside <a>",
+        "<button> nested inside <button>",
+        "<form> nested inside <form>",
+        "<li> outside of <ul> or <ol>",
+        "<td> or <th> outside of <tr>",
+        "<tr> outside of <table>",
+        "Interactive elements nested inside other interactive elements"
+      ],
+      "allowedPatterns": [
+        "Using <span> instead of <div> for inline content within paragraphs",
+        "Using semantic HTML as per the HTML specification",
+        "Validating HTML structure with eslint-plugin-jsx-a11y"
+      ],
+      "productionRisks": [
+        "Hydration errors in production causing React to fully re-render in the browser",
+        "Accessibility failures from broken semantic structure",
+        "Unpredictable layout rendering across browsers"
+      ],
+      "architectureImplications": [
+        "HTML validity is an architectural requirement for hydration correctness in SSR applications"
+      ],
+      "optimizationGuidance": [
+        "Enable eslint-plugin-jsx-a11y in CI to catch invalid nesting at development time"
+      ],
+      "quickFixes": [
+        "Replace <div> inside <p> with <span>",
+        "Replace nested <a> with a styled <span> or restructure the markup"
+      ],
+      "architectureSuggestions": [],
+      "examples": {
+        "invalid": [
+          "<p>Some text <div>Block element</div> more text</p> // Browser will move the div, causing hydration mismatch"
+        ],
+        "valid": ["<p>Some text <span>Inline content</span> more text</p>"]
+      }
+    }
+  ]
 }

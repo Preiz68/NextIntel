@@ -1,138 +1,350 @@
 {
   "concept": "Server Components",
   "category": "rendering",
-  "description": "React components that execute exclusively on the server. Default component type in Next.js App Router. Output is serialized as RSC Payload and never includes component source code or secrets in the client bundle.",
+  "description": "Server Components are the default component type in the Next.js App Router. They render exclusively on the server, produce a React Server Component Payload (RSC Payload), and never ship JavaScript to the client bundle. They enable direct data access close to the source, protect secrets, reduce client-side JavaScript, improve First Contentful Paint (FCP), and allow progressive streaming. They are composable with Client Components through prop-passing and the children/slot pattern, maintaining a strict server/client boundary.",
 
   "constraints": [
-    "Cannot use React client hooks: useState, useEffect, useReducer, useContext, etc.",
-    "Cannot use browser-only APIs: window, document, localStorage, navigator, etc.",
-    "Cannot attach event handlers: onClick, onChange, onSubmit, etc.",
-    "Cannot use React context as a consumer — context is not supported in Server Components",
-    "Props passed to Client Components must be serializable by React",
-    "Cannot import client-only modules without wrapping in a Client Component boundary",
-    "Cannot be made interactive without delegating to a Client Component",
-    "Async Server Components must be awaited at the point of composition",
-    "Environment variables without NEXT_PUBLIC_ prefix are safe to use and will NOT leak to client"
-  ],
-
-  "allowedPatterns": [
-    "Async/await data fetching directly in component body",
-    "Direct database access via ORM or database client — credentials excluded from client bundle",
-    "Access to server-side secrets, API keys, tokens via environment variables",
-    "Importing and using server-only modules",
-    "Passing serializable data as props to Client Components",
-    "Passing Server Components as children or props to Client Components",
-    "Using React.cache() to deduplicate requests across the component tree",
-    "Sequential or parallel async data fetching with Promise.all / Promise.allSettled",
-    "Streaming output via Suspense boundaries",
-    "Importing the server-only package to enforce server-only module boundaries",
-    "Using fetch() with next.tags, next.revalidate, or cache options",
-    "Using use cache directive to cache computation results"
-  ],
-
-  "forbiddenPatterns": [
-    "useState() inside a Server Component",
-    "useEffect() inside a Server Component",
-    "useReducer() inside a Server Component",
-    "useContext() inside a Server Component",
-    "createContext() consumption inside a Server Component",
-    "onClick, onChange, or any event handler attached directly in JSX",
-    "window, document, localStorage, sessionStorage, navigator access",
-    "Importing client-only packages (e.g. packages using window) without a Client Component wrapper",
-    "Passing non-serializable values (functions, class instances, Promises without use()) as props to Client Components",
-    "Marking an entire layout or root component as 'use client' unnecessarily"
-  ],
-
-  "runtimeBehavior": [
-    "Executes only on the server — never sent to or re-executed on the client",
-    "Rendered into RSC Payload: a compact binary representation of the rendered component tree",
-    "RSC Payload contains: rendered output of Server Components, placeholders for Client Components with JS file references, serialized props passed to Client Components",
-    "On first load: HTML is generated from Server Components for immediate non-interactive preview",
-    "On subsequent navigations: RSC Payload is fetched and used to reconcile the component tree — no HTML re-generation",
-    "Identical fetch() calls within the same render are automatically memoized — safe to call in multiple components without deduplication logic",
-    "fetch() requests are not cached by default — each request fetches fresh data unless cache: 'force-cache' or use cache is used",
-    "Routes with uncached fetch requests are rendered dynamically at request time",
-    "Routes with only cached or static data are prerendered at build time (static rendering)",
-    "Rendering is split into chunks by route segment — each layout and page is a separate render unit"
-  ],
-
-  "architectureImplications": [
-    "Default component type — opt-in to client behavior, not opt-out",
-    "Enforces data-fetching colocation: fetch data in the component that needs it, not a parent",
-    "Eliminates the need for API routes to serve data to the frontend — direct DB/service access is idiomatic",
-    "Server Component tree and Client Component tree are separate module graphs — a file imported into a Client Component is NOT a Server Component",
-    "Enables leaf-node client boundaries: only interactive leaf components need 'use client', keeping most of the tree server-rendered",
-    "Third-party components that use client APIs must be wrapped in a Client Component boundary before use in Server Components",
-    "Context providers must be Client Components — wrap only the subtree that needs context, not the entire document",
-    "server-only package enforces server module boundaries at build time — import it in any file that must never reach the client"
-  ],
-
-  "performanceImplications": [
-    "Reduces client-side JavaScript bundle size — Server Component code is never included in JS bundles",
-    "Improves First Contentful Paint (FCP) — HTML is generated on server and sent immediately",
-    "Enables streaming — slow data fetches can be wrapped in Suspense to unblock fast content",
-    "Memoization of identical fetch() calls prevents redundant network requests within a single render",
-    "Parallel layout/page rendering — each route segment fetches data concurrently by default",
-    "Prerendering (static rendering) at build time eliminates per-request server work for cacheable routes",
-    "Fetching data in Server Components avoids client-server waterfalls for initial page loads"
-  ],
-
-  "commonMisusePatterns": [
-    "Marking entire layouts or page files as 'use client' — loses all server rendering benefits for that subtree",
-    "Using useState or useEffect as a signal to add 'use client' without isolating the interactive part to a leaf component",
-    "Fetching data in Client Components when Server Components could fetch it — creates client-server waterfalls",
-    "Passing functions or class instances as props from Server to Client Components — causes serialization errors",
-    "Using third-party components with client APIs directly in Server Components without wrapping",
-    "Wrapping ThemeProvider or other providers around the entire <html> instead of only children — prevents static optimization of outer shell",
-    "Not using server-only package in files containing secrets — risks accidental client inclusion",
-    "Creating deep prop drilling of server data when React.cache + context pattern would be cleaner"
-  ],
-
-  "productionRisks": [
-    "Secret leakage: NEXT_PUBLIC_ prefixed variables are embedded in client bundle — never prefix secrets with NEXT_PUBLIC_",
-    "Hydration mismatches: Server-rendered output must match client-rendered output — dynamic values (dates, random IDs) must be consistent",
-    "Increased TTFB if Server Components perform slow uncached database queries on every request",
-    "Accidental server-only module inclusion in client bundle if server-only package is not used and module is imported transitively by a Client Component",
-    "Non-serializable prop errors at runtime if complex objects are passed from Server to Client Components",
-    "Cache staleness if revalidation strategy is not configured — stale data served indefinitely after build"
-  ],
-
-  "relatedConcepts": [
-    "Client Components",
-    "RSC Payload",
-    "Hydration",
-    "Streaming",
-    "Suspense",
-    "use cache directive",
-    "Data Cache",
-    "Partial Prerendering (PPR)",
-    "Route Handlers",
-    "Server Actions"
-  ],
-
-  "examples": {
-    "valid": [
-      "// Async data fetch directly in Server Component\nexport default async function Page({ params }) {\n  const { id } = await params\n  const post = await db.posts.findById(id)\n  return <article>{post.title}</article>\n}",
-
-      "// Pass serializable data to Client Component\nimport LikeButton from './like-button'\nexport default async function Page({ params }) {\n  const post = await getPost((await params).id)\n  return <LikeButton likes={post.likes} />\n}",
-
-      "// Pass Server Component as children prop to Client Component\nimport Modal from './modal'     // 'use client'\nimport Cart from './cart'       // Server Component\nexport default function Page() {\n  return <Modal><Cart /></Modal>\n}",
-
-      "// Enforce server-only boundary\nimport 'server-only'\nexport async function getSecretData() {\n  return fetch(url, { headers: { authorization: process.env.API_KEY } })\n}",
-
-      "// Parallel data fetching\nconst [artist, albums] = await Promise.all([getArtist(username), getAlbums(username)])"
-    ],
-
-    "invalid": [
-      "// useState in a Server Component — build error\nexport default function Counter() {\n  const [count, setCount] = useState(0) // ERROR\n  return <button onClick={() => setCount(count + 1)}>{count}</button>\n}",
-
-      "// Passing a function prop to Client Component — serialization error\nexport default function Page() {\n  return <ClientComp onAction={() => console.log('hi')} /> // ERROR: functions are not serializable\n}",
-
-      "// Using window in a Server Component\nexport default function Page() {\n  const width = window.innerWidth // ERROR: window is not defined on server\n  return <div>{width}</div>\n}",
-
-      "// Marking entire layout as client — loses server rendering for all children\n'use client'\nexport default function Layout({ children }) {\n  return <html><body>{children}</body></html> // ANTI-PATTERN\n}",
-
-      "// Importing client-only library directly in Server Component\nimport { Carousel } from 'acme-carousel' // uses useState internally\nexport default function Page() {\n  return <Carousel /> // ERROR: client-only features in server context\n}"
-    ]
-  }
+    {
+      "id": "SC-001",
+      "title": "No Browser APIs in Server Components",
+      "problem": "Browser-only globals such as window, document, localStorage, sessionStorage, navigator, and location cannot be accessed inside Server Components.",
+      "whyItMatters": "Server Components execute only in the Node.js server runtime. There is no browser context, no DOM, and no Web APIs. Any usage will throw a ReferenceError at runtime or during build, crashing the render and returning a 500 error to users.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "window",
+        "document",
+        "document.getElementById",
+        "document.querySelector",
+        "localStorage",
+        "sessionStorage",
+        "navigator",
+        "navigator.geolocation",
+        "navigator.userAgent",
+        "location",
+        "location.href",
+        "location.pathname",
+        "history",
+        "history.push",
+        "indexedDB",
+        "XMLHttpRequest",
+        "alert()",
+        "confirm()",
+        "prompt()",
+        "requestAnimationFrame",
+        "cancelAnimationFrame",
+        "IntersectionObserver",
+        "MutationObserver",
+        "ResizeObserver",
+        "PerformanceObserver",
+        "crypto.getRandomValues",
+        "matchMedia",
+        "screen",
+        "devicePixelRatio"
+      ],
+      "allowedPatterns": [
+        "async/await data fetching",
+        "Node.js built-ins (fs, path, crypto)",
+        "Server-side environment variables (process.env.SECRET)",
+        "Database queries (ORM, raw SQL)",
+        "cookies() from next/headers",
+        "headers() from next/headers"
+      ],
+      "productionRisks": [
+        "ReferenceError crashing the server render",
+        "500 errors served to users",
+        "Build failures in strict mode",
+        "Broken pages when deployed to serverless environments"
+      ],
+      "architectureImplications": [
+        "Browser interaction logic must live in Client Components",
+        "Server Components define the static structure and data-fetching layer",
+        "Interactivity is an explicit opt-in via 'use client'"
+      ],
+      "optimizationGuidance": [
+        "Keep Server Components purely data-driven and stateless",
+        "Push all browser-API usage to the smallest possible Client Component leaf nodes"
+      ],
+      "quickFixes": [
+        "Add 'use client' at the top of the file if the component needs browser APIs",
+        "Extract only the browser-dependent part into a separate Client Component and import it"
+      ],
+      "architectureSuggestions": [
+        "Design components so that the Server Component fetches and owns data, and a thin Client Component handles display/interaction",
+        "Use the children/slot pattern to pass server-rendered subtrees into client wrappers"
+      ],
+      "examples": {
+        "invalid": [
+          "export default async function Page() { const stored = localStorage.getItem('token'); return <div>{stored}</div> }"
+        ],
+        "valid": [
+          "export default async function Page() { const data = await fetch('https://api.example.com/data'); const json = await data.json(); return <div>{json.title}</div> }"
+        ]
+      }
+    },
+    {
+      "id": "SC-002",
+      "title": "No React Hooks in Server Components",
+      "problem": "React hooks (useState, useEffect, useReducer, useContext, useRef, useCallback, useMemo, useTransition, useDeferredValue, useId, useLayoutEffect, useInsertionEffect) cannot be used in Server Components.",
+      "whyItMatters": "Hooks are part of the React client runtime and rely on the fiber reconciler running in the browser. Server Components are rendered to the RSC Payload in a one-shot server pass with no reconciler, no state tree, and no effect scheduling. Attempting to use hooks causes an immediate runtime error.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "useState",
+        "useEffect",
+        "useReducer",
+        "useContext",
+        "useRef",
+        "useCallback",
+        "useMemo",
+        "useTransition",
+        "useDeferredValue",
+        "useId",
+        "useLayoutEffect",
+        "useInsertionEffect",
+        "useImperativeHandle",
+        "useSyncExternalStore",
+        "useOptimistic",
+        "useFormStatus",
+        "useFormState",
+        "createContext",
+        "forwardRef (with hook internals)"
+      ],
+      "allowedPatterns": [
+        "async/await instead of useEffect for data loading",
+        "Direct variable declarations instead of useState for static values",
+        "Server-side caching (use cache directive, unstable_cache) instead of useMemo",
+        "React.cache() for request-scoped memoization"
+      ],
+      "productionRisks": [
+        "Build-time errors that block deployment",
+        "Runtime crashes breaking entire route segments",
+        "Invalid RSC Payload causing client reconciliation failures"
+      ],
+      "architectureImplications": [
+        "All stateful and reactive logic must be isolated in Client Components",
+        "Server Components are pure render functions that accept props and return JSX"
+      ],
+      "optimizationGuidance": [
+        "Replace useEffect data-loading with top-level async/await in Server Components",
+        "Use React.cache() for deduplicating expensive server-side computations within a request"
+      ],
+      "quickFixes": [
+        "Add 'use client' to any file using hooks",
+        "Move hook-dependent logic to a dedicated Client Component file"
+      ],
+      "architectureSuggestions": [
+        "Establish a clear rule: Server Components are async functions that return JSX; Client Components are interactive leaf nodes",
+        "Wrap context providers in dedicated 'use client' files imported by the root layout"
+      ],
+      "examples": {
+        "invalid": [
+          "'use server'\nexport default function Counter() { const [count, setCount] = useState(0); return <button onClick={() => setCount(c => c+1)}>{count}</button> }"
+        ],
+        "valid": [
+          "'use client'\nimport { useState } from 'react'\nexport default function Counter() { const [count, setCount] = useState(0); return <button onClick={() => setCount(c => c+1)}>{count}</button> }"
+        ]
+      }
+    },
+    {
+      "id": "SC-003",
+      "title": "No Event Handlers in Server Components",
+      "problem": "Event handler props (onClick, onChange, onSubmit, onKeyDown, onMouseOver, etc.) cannot be attached inside Server Components.",
+      "whyItMatters": "Event handlers are JavaScript callbacks that run in the browser. Server Components produce static RSC Payload with no JavaScript bundle output. Attaching event handlers in a Server Component means those handlers will never execute because no JavaScript is shipped for them.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "onClick",
+        "onChange",
+        "onSubmit",
+        "onKeyDown",
+        "onKeyUp",
+        "onMouseOver",
+        "onMouseOut",
+        "onFocus",
+        "onBlur",
+        "onInput",
+        "onScroll",
+        "onTouchStart",
+        "onTouchEnd",
+        "onDrag",
+        "onDrop",
+        "onContextMenu",
+        "onWheel",
+        "onAnimationEnd",
+        "onTransitionEnd"
+      ],
+      "allowedPatterns": [
+        "Server Actions bound to <form action={...}> for declarative mutation handling",
+        "Passing event handlers as serialized props from Server to Client Components"
+      ],
+      "productionRisks": [
+        "Silent failures: button clicks and form submissions do nothing",
+        "Confusing UX with non-interactive-looking interactive elements",
+        "Security risk if a developer mistakenly assumes a handler executed server-side"
+      ],
+      "architectureImplications": [
+        "Interactive UI must be architected as Client Components",
+        "Forms in Server Components should use Server Actions (action prop) for mutation"
+      ],
+      "optimizationGuidance": [
+        "Use Server Actions with <form action={serverAction}> for mutation patterns to keep the component server-rendered",
+        "Create isolated Client Component wrappers only for the interactive element, not the whole page"
+      ],
+      "quickFixes": [
+        "Extract the interactive element into a 'use client' component",
+        "For form submissions, replace onClick handlers with a Server Action passed to <form action={}>"
+      ],
+      "architectureSuggestions": [
+        "Design page-level components as Server Components with Server Actions for mutations, and extract interactive controls as small Client Component islands"
+      ],
+      "examples": {
+        "invalid": [
+          "export default function Page() { return <button onClick={() => console.log('clicked')}>Click</button> }"
+        ],
+        "valid": [
+          "'use client'\nexport default function Button() { return <button onClick={() => console.log('clicked')}>Click</button> }"
+        ]
+      }
+    },
+    {
+      "id": "SC-004",
+      "title": "Environment Variable Exposure via Server Components",
+      "problem": "Non-public environment variables accessed in Server Components can be accidentally leaked to the client if the file is also imported into a Client Component module graph.",
+      "whyItMatters": "Next.js only includes environment variables prefixed with NEXT_PUBLIC_ in the client bundle. However, if a utility module containing server-only logic (API keys, secrets, database credentials) is imported into a Client Component, those variables are replaced with empty strings, breaking functionality silently rather than throwing an error. In some misuse patterns, secrets could be serialized into RSC props and exposed.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "Importing server-side utility files (with API keys, DB credentials) into Client Components",
+        "Passing raw secret values as props from Server to Client Components",
+        "Using process.env.SECRET_KEY inside components without server-only guard",
+        "Exporting functions that contain secrets from shared module files"
+      ],
+      "allowedPatterns": [
+        "import 'server-only' at the top of any file with server-exclusive logic",
+        "Passing sanitized DTOs (Data Transfer Objects) as props — never raw database records",
+        "Prefixing truly public variables with NEXT_PUBLIC_",
+        "Using the taint API (experimental) to prevent sensitive objects from crossing to client"
+      ],
+      "productionRisks": [
+        "API key exposure in client bundles",
+        "Database credential leakage",
+        "Silent broken behavior when secrets become empty strings on the client",
+        "Security audit failures"
+      ],
+      "architectureImplications": [
+        "A clear Data Access Layer (DAL) enforces server-only data access patterns",
+        "Server Components should return sanitized, minimal DTOs rather than full database records"
+      ],
+      "optimizationGuidance": [
+        "Create a dedicated lib/dal.ts (Data Access Layer) marked with import 'server-only'",
+        "Never pass raw database rows as props; serialize minimal, safe fields"
+      ],
+      "quickFixes": [
+        "Add import 'server-only' to any file containing secrets or database access",
+        "Audit all props passed from Server to Client Components for sensitive data"
+      ],
+      "architectureSuggestions": [
+        "Establish a Data Access Layer (DAL) as the sole entry point for data, marked server-only, performing authorization checks and returning minimal DTOs"
+      ],
+      "examples": {
+        "invalid": [
+          "// lib/data.ts (no server-only guard)\nexport async function getUser() { return fetch(url, { headers: { authorization: process.env.API_SECRET } }) }"
+        ],
+        "valid": [
+          "// lib/data.ts\nimport 'server-only'\nexport async function getUser() { return fetch(url, { headers: { authorization: process.env.API_SECRET } }) }"
+        ]
+      }
+    },
+    {
+      "id": "SC-005",
+      "title": "React Context Not Supported in Server Components",
+      "problem": "createContext and useContext cannot be used directly in Server Components.",
+      "whyItMatters": "React context is a client-side state propagation mechanism that requires the reconciler. Server Components have no context tree. Attempting to consume context in a Server Component will result in a runtime error or undefined values.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "createContext() in a Server Component",
+        "useContext() in a Server Component",
+        "Context.Provider in a Server Component",
+        "Wrapping the root layout's body with a context provider that is itself a Server Component"
+      ],
+      "allowedPatterns": [
+        "Creating a 'use client' context provider component that wraps children",
+        "Importing the client provider into the root layout (server component) and passing children through",
+        "Passing data via props from Server to Client Components instead of context when possible"
+      ],
+      "productionRisks": [
+        "Runtime crashes when context is accessed in server-rendered subtrees",
+        "Overly broad 'use client' boundaries inflating bundle size when wrapping too high in the tree"
+      ],
+      "architectureImplications": [
+        "Context providers are always Client Components",
+        "Providers should wrap as deep in the tree as possible to minimize the Client Component surface area",
+        "Global state that depends on server data should be fetched server-side and passed as props to the provider"
+      ],
+      "optimizationGuidance": [
+        "Render context providers as deep as possible in the component tree to keep the static server-rendered outer shell large",
+        "Prefer prop drilling or URL state for simple cases to avoid adding a context provider at all"
+      ],
+      "quickFixes": [
+        "Create a new file with 'use client' for the context and provider",
+        "Import that provider into the Server Component layout and wrap children with it"
+      ],
+      "architectureSuggestions": [
+        "Use a pattern where the Server Component fetches data, then passes it as initial props to a 'use client' provider, minimizing client-side fetching"
+      ],
+      "examples": {
+        "invalid": [
+          "import { createContext } from 'react'\nexport const Ctx = createContext({})\nexport default function Layout({ children }) { return <Ctx.Provider value='dark'>{children}</Ctx.Provider> }"
+        ],
+        "valid": [
+          "'use client'\nimport { createContext } from 'react'\nexport const ThemeCtx = createContext({})\nexport default function ThemeProvider({ children }) { return <ThemeCtx.Provider value='dark'>{children}</ThemeCtx.Provider> }"
+        ]
+      }
+    },
+    {
+      "id": "SC-006",
+      "title": "Mutations Must Not Occur During Server Component Rendering",
+      "problem": "Side effects like setting cookies, invalidating caches, or writing to a database must not happen during the render phase of a Server Component.",
+      "whyItMatters": "Next.js explicitly prevents setting cookies or triggering cache revalidation within render methods to prevent unintended side effects. Mutations during render break the predictability of prerendering and caching, and can cause stale data, double-writes, and security vulnerabilities.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "cookies().set() or cookies().delete() inside a Server Component render",
+        "revalidateTag() inside a Server Component render",
+        "revalidatePath() inside a Server Component render",
+        "Database writes inside a Server Component render function",
+        "Triggering mutations based on searchParams during render"
+      ],
+      "allowedPatterns": [
+        "Server Actions for all data mutations",
+        "<form action={serverAction}> for form-based mutations",
+        "revalidateTag() and revalidatePath() called from Server Actions or Route Handlers only"
+      ],
+      "productionRisks": [
+        "Double-execution of mutations during development (Strict Mode double-render)",
+        "Cache poisoning from mutations during prerendering",
+        "Stale data served after a mutation that was silently suppressed",
+        "Security vulnerabilities from unauthorized mutations on page load"
+      ],
+      "architectureImplications": [
+        "Read operations belong in Server Component render; write operations belong in Server Actions",
+        "Route Handlers are the correct boundary for webhook-style mutation triggers"
+      ],
+      "optimizationGuidance": [
+        "Centralize all mutations in Server Actions co-located with the UI that triggers them",
+        "Always pair a mutation Server Action with revalidateTag to keep cache coherent"
+      ],
+      "quickFixes": [
+        "Move the mutation logic into an async function marked 'use server'",
+        "Attach that Server Action to a <form> or call it from a Client Component event handler"
+      ],
+      "architectureSuggestions": [
+        "Use the pattern: Server Component renders read data → Client Component handles interaction → Server Action handles mutation and revalidation"
+      ],
+      "examples": {
+        "invalid": [
+          "export default async function Page({ searchParams }) { if (searchParams.logout) { (await cookies()).delete('session') } return <Profile /> }"
+        ],
+        "valid": [
+          "'use server'\nexport async function logout() { (await cookies()).delete('session') }\n// In Server Component: <form action={logout}><button>Logout</button></form>"
+        ]
+      }
+    }
+  ]
 }

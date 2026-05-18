@@ -1,0 +1,202 @@
+{
+  "concept": "Rendering",
+  "category": "rendering",
+  "description": "Next.js App Router supports multiple rendering strategies determined at the route segment level: Static Rendering (prerendered at build time, cached, CDN-distributable), Dynamic Rendering (rendered per-request, no caching), Streaming (progressive server-to-client delivery via React Suspense), and Partial Prerendering (PPR — a hybrid that statically renders a shell with dynamic holes streamed at request time). Server Components default to static rendering and opt into dynamic rendering when they access runtime APIs. Client Components are prerendered to HTML on the server and hydrated on the client. The rendering strategy directly determines application performance, scalability, and cost.",
+
+  "constraints": [
+    {
+      "id": "RE-001",
+      "title": "Static Rendering Is the Performance Baseline — Opt Out Intentionally",
+      "problem": "Static rendering (prerendering at build time) is Next.js's most performant default. Opting out into dynamic rendering should be an intentional, documented architectural decision, not an accidental side effect.",
+      "whyItMatters": "Statically rendered routes are served from CDN with zero server compute cost, sub-millisecond TTFB, and infinite horizontal scalability. Dynamic rendering requires server compute on every request, increases latency, and scales proportionally with traffic. Accidentally opting into dynamic rendering (e.g., via an unguarded cookies() call in a layout) can cause significant performance and cost regressions at scale.",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "Calling cookies() or headers() in a root layout without Suspense, making the entire app dynamic",
+        "Setting export const dynamic = 'force-dynamic' without a documented reason",
+        "Setting export const revalidate = 0 on a page that could use longer cache lifetimes",
+        "Using Date.now() in a Server Component render without connection() guard, blocking prerendering",
+        "Accessing Math.random() in a Server Component without connection() guard"
+      ],
+      "allowedPatterns": [
+        "export const dynamic = 'force-static' to guarantee a route is prerendered",
+        "export const revalidate = 3600 for hourly ISR (Incremental Static Regeneration)",
+        "generateStaticParams() to pregenerate all variants of dynamic routes at build time",
+        "Wrapping dynamic sections in <Suspense> for PPR instead of making entire routes dynamic"
+      ],
+      "productionRisks": [
+        "Unexpected server costs from accidentally dynamic routes under load",
+        "Higher latency for users on accidentally dynamic routes",
+        "Loss of CDN caching benefits",
+        "Scalability cliff when traffic increases for routes that should be static"
+      ],
+      "architectureImplications": [
+        "Rendering strategy is determined at route segment level (layout/page)",
+        "The presence of any Request-time API in a segment without Suspense makes the entire segment dynamic",
+        "PPR allows the static shell to be served from CDN while dynamic holes stream from the server"
+      ],
+      "optimizationGuidance": [
+        "Audit all routes with the Next.js build output to verify expected static/dynamic classification",
+        "Use generateStaticParams() for all known dynamic route parameters",
+        "Profile TTFB for key routes in staging to detect accidental dynamic rendering"
+      ],
+      "quickFixes": [
+        "Add export const dynamic = 'force-static' to pages that should always be prerendered",
+        "Wrap the dynamic section in <Suspense> instead of opting the entire route into dynamic rendering"
+      ],
+      "architectureSuggestions": [
+        "Default all routes to static; explicitly opt into dynamic rendering per-route with a documented justification",
+        "Use PPR as the architecture for pages that need both static performance and dynamic personalization"
+      ],
+      "examples": {
+        "invalid": [
+          "// app/layout.tsx — accidentally opts entire app into dynamic rendering\nimport { cookies } from 'next/headers'\nexport default async function RootLayout({ children }) { const session = await cookies(); return <html><body>{children}</body></html> }"
+        ],
+        "valid": [
+          "// app/layout.tsx — static layout\nexport default function RootLayout({ children }) { return <html><body>{children}</body></html> }\n// app/page.tsx — dynamic section isolated in Suspense\nimport { Suspense } from 'react'\nexport default function Page() { return <main><StaticHero /><Suspense fallback={<Skeleton />}><DynamicUserFeed /></Suspense></main> }"
+        ]
+      }
+    },
+    {
+      "id": "RE-002",
+      "title": "Streaming Requires Suspense Boundaries with Meaningful Fallbacks",
+      "problem": "Streaming with React Suspense requires properly placed Suspense boundaries with non-empty fallback UIs. An empty fallback or a Suspense boundary too high in the tree eliminates the static shell and forces full dynamic rendering.",
+      "whyItMatters": "The Suspense fallback content becomes part of the static HTML shell. If the fallback is empty (null), the browser receives no visible content until the streamed component arrives, negating the benefit of SSR. If the Suspense boundary wraps the entire document body, the entire page defers to request time with no static shell.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "<Suspense fallback={null}> wrapping the <body> in the root layout",
+        "<Suspense fallback={null}> for above-the-fold content",
+        "Missing Suspense boundaries around slow data-fetching components (causing the entire route to wait)",
+        "Placing a single Suspense boundary for the entire page content instead of per-component boundaries",
+        "Using loading.js without understanding it wraps the entire page segment"
+      ],
+      "allowedPatterns": [
+        "<Suspense fallback={<Skeleton />}> for slow content sections",
+        "Nested Suspense boundaries at different granularities for progressive loading",
+        "loading.js for route-level loading states during navigation",
+        "Streaming with Suspense to progressively hydrate components as they arrive",
+        "Providing skeleton/placeholder UIs that match the shape of the loaded content to reduce CLS"
+      ],
+      "productionRisks": [
+        "Blank screen on initial load when empty fallbacks are used for above-the-fold content",
+        "Full dynamic rendering of the page when Suspense wraps body at root layout",
+        "Poor perceived performance despite server-side data fetching",
+        "CLS from skeleton placeholders that don't match the actual content size"
+      ],
+      "architectureImplications": [
+        "Streaming architecture requires designing skeleton/loading states as first-class UI elements",
+        "Granular Suspense boundaries produce better UX than single coarse boundaries",
+        "loading.js is a convenience wrapper for segment-level Suspense; for fine-grained control, use Suspense directly"
+      ],
+      "optimizationGuidance": [
+        "Design loading skeleton components early in development — they are architectural, not cosmetic",
+        "Place Suspense boundaries as close as possible to the async data consumers, not at the top of the tree",
+        "Group multiple slow dependencies behind a single Suspense boundary only when they logically load together"
+      ],
+      "quickFixes": [
+        "Replace <Suspense fallback={null}> with a meaningful skeleton component",
+        "Add Suspense boundaries around individual slow-loading components rather than the whole page"
+      ],
+      "architectureSuggestions": [
+        "Adopt a 'streaming-first' design: every slow data dependency gets a Suspense boundary with a skeleton that preserves layout space"
+      ],
+      "examples": {
+        "invalid": [
+          "// Root layout — eliminates all static HTML\nexport default function RootLayout({ children }) { return <html><Suspense fallback={null}><body>{children}</body></Suspense></html> }"
+        ],
+        "valid": [
+          "export default function Page() { return <main><StaticContent /><Suspense fallback={<PostsSkeleton />}><SlowPostList /></Suspense></main> }"
+        ]
+      }
+    },
+    {
+      "id": "RE-003",
+      "title": "Dynamic Route Segments Require generateStaticParams for Static Generation",
+      "problem": "Dynamic route segments (e.g., app/blog/[id]/page.tsx) are not statically generated by default. Without generateStaticParams(), every request to a dynamic route triggers on-demand server rendering.",
+      "whyItMatters": "For content-driven applications (blogs, product pages, documentation), dynamic route segments represent the bulk of the pages. Without generateStaticParams(), these pages miss static generation entirely, forcing server compute and database queries on every page view instead of serving pre-built HTML from CDN.",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "Dynamic route segments without generateStaticParams() for known, enumerable content (blog posts, product pages, documentation)",
+        "Omitting generateStaticParams() for SEO-critical content that changes infrequently"
+      ],
+      "allowedPatterns": [
+        "export async function generateStaticParams() { return items.map(i => ({ id: i.id })) }",
+        "Combining generateStaticParams() with export const revalidate = 3600 for ISR of static pages",
+        "Using dynamicParams = false to return 404 for unknown params (guarantees fully static behavior)",
+        "Using dynamicParams = true (default) to fall back to dynamic rendering for unknown params"
+      ],
+      "productionRisks": [
+        "High server load on popular dynamic routes that should be statically generated",
+        "Poor SEO from slow TTFB on dynamically rendered content pages",
+        "Unnecessary database load from per-request page rendering"
+      ],
+      "architectureImplications": [
+        "Static generation requires knowing the set of valid params at build time",
+        "ISR (revalidate + generateStaticParams) enables static generation with periodic fresh data",
+        "export const dynamicParams = false enforces strict static-only behavior, returning 404 for unknown params"
+      ],
+      "optimizationGuidance": [
+        "Always implement generateStaticParams() for content that can be enumerated at build time",
+        "Combine with ISR (revalidate) to keep static pages fresh without full rebuilds"
+      ],
+      "quickFixes": [
+        "Add export async function generateStaticParams() that fetches all known IDs from the data source"
+      ],
+      "architectureSuggestions": [
+        "For e-commerce and content sites, generate all product/post/category pages statically with ISR for freshness; reserve dynamic rendering only for cart, checkout, and user-specific pages"
+      ],
+      "examples": {
+        "invalid": [
+          "// app/blog/[id]/page.tsx — no generateStaticParams, every request hits the server\nexport default async function Page({ params }) { const post = await getPost(params.id); return <Article post={post} /> }"
+        ],
+        "valid": [
+          "export const revalidate = 3600\nexport async function generateStaticParams() { const posts = await getAllPostIds(); return posts.map(p => ({ id: p.id })) }\nexport default async function Page({ params }) { const post = await getPost(params.id); return <Article post={post} /> }"
+        ]
+      }
+    },
+    {
+      "id": "RE-004",
+      "title": "Parallel Data Fetching Prevents Rendering Waterfalls",
+      "problem": "Awaiting multiple data sources sequentially in a Server Component creates a rendering waterfall where each fetch must complete before the next begins, increasing total render time proportionally to the number of requests.",
+      "whyItMatters": "Sequential awaits compound latency: if each fetch takes 100ms, three sequential fetches take 300ms minimum. Parallel fetching with Promise.all() reduces total time to the duration of the slowest individual request. At scale, sequential fetching creates P99 latency that accumulates across all slow data sources.",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "Multiple sequential await statements for independent data sources in a single Server Component",
+        "await A; await B; await C when A, B, C are independent fetches",
+        "Fetching parent data, rendering a child, which fetches more data (component-level waterfall)"
+      ],
+      "allowedPatterns": [
+        "Promise.all([fetchA(), fetchB(), fetchC()]) for parallel independent fetches",
+        "Promise.allSettled() when some fetches may fail without breaking the page",
+        "Fetch deduplication via React.cache() to avoid re-fetching the same data across components",
+        "Initiating multiple fetches at the top of a component before any await to allow parallel execution"
+      ],
+      "productionRisks": [
+        "Unnecessarily slow server response times",
+        "P99 latency scaling linearly with the number of sequential fetches",
+        "Blocking the entire page render on the slowest sequential fetch"
+      ],
+      "architectureImplications": [
+        "Independent data dependencies should be fetched in parallel at the page level",
+        "Component-level data fetching (each component fetches its own data) can naturally parallelize fetching across component tree branches"
+      ],
+      "optimizationGuidance": [
+        "Identify all data dependencies for a page at the top of the Server Component and initiate them with Promise.all()",
+        "Use the preload pattern (void getItem(id) called early) to start fetches before other async work"
+      ],
+      "quickFixes": [
+        "Replace sequential awaits with const [a, b] = await Promise.all([fetchA(), fetchB()])"
+      ],
+      "architectureSuggestions": [
+        "Design Server Components to declare all data dependencies upfront and initiate parallel fetches, then compose the JSX below the resolved data"
+      ],
+      "examples": {
+        "invalid": [
+          "export default async function Page({ params }) { const user = await getUser(params.id); const posts = await getPosts(params.id); const friends = await getFriends(params.id); return <Profile user={user} posts={posts} friends={friends} /> }"
+        ],
+        "valid": [
+          "export default async function Page({ params }) { const [user, posts, friends] = await Promise.all([ getUser(params.id), getPosts(params.id), getFriends(params.id) ]); return <Profile user={user} posts={posts} friends={friends} /> }"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,230 @@
+{
+  "concept": "Data Fetching",
+  "category": "data-fetching",
+  "description": "Next.js App Router supports server-side data fetching natively in Server Components using async/await. The extended fetch() API provides fine-grained caching control via cache and next.revalidate options. For non-fetch data sources (ORM, databases, SDKs), React.cache() provides per-request memoization and unstable_cache (or 'use cache' directive) provides persistent caching. The recommended pattern is to fetch data as close to where it is needed as possible, using Server Components for initial loads, leveraging request memoization to avoid duplicate fetches, and using parallel fetching to prevent sequential waterfalls. Client-side fetching (SWR, TanStack Query) is reserved for data that must be fresh after user interactions.",
+
+  "constraints": [
+    {
+      "id": "DF-001",
+      "title": "Fetch Data in Server Components — Avoid Client-Side Initial Data Loading",
+      "problem": "Fetching initial page data in Client Components via useEffect or third-party libraries (SWR, TanStack Query) on mount creates a client-side waterfall: the HTML loads, JavaScript executes, then the data fetch begins, resulting in a blank or skeleton state that users must wait through.",
+      "whyItMatters": "Server Components can fetch data before sending any HTML to the browser. By the time the user sees the page, data is already rendered. Client-side initial data fetching means users always see a loading state on first visit, degrading LCP and perceived performance. It also prevents static prerendering of the data.",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "useEffect(() => { fetch('/api/data').then(setData) }, []) for initial page data",
+        "SWR or TanStack Query for data that is available at render time and does not change via user interaction",
+        "Fetching data in Client Components when a parent Server Component could fetch it instead",
+        "Using getServerSideProps-style API Route fetching patterns in the App Router"
+      ],
+      "allowedPatterns": [
+        "async/await directly in Server Components for initial data",
+        "Passing fetched data as props from Server Components to Client Components",
+        "SWR/TanStack Query in Client Components for data that must refresh on user interaction",
+        "The use() hook in Client Components to consume a promise passed from a Server Component (streaming pattern)"
+      ],
+      "productionRisks": [
+        "Degraded LCP from client-side data loading waterfalls",
+        "Flash of loading state on every page visit",
+        "Loss of prerendering and CDN caching for data",
+        "Unnecessary client JavaScript for data fetching libraries"
+      ],
+      "architectureImplications": [
+        "The App Router's server-first design eliminates the need for client-side initial data fetching in most cases",
+        "Client-side data fetching libraries should be used for mutations, polling, and user-interaction-driven refreshes, not initial loads"
+      ],
+      "optimizationGuidance": [
+        "Migrate useEffect data fetching to Server Components progressively, starting with the most critical above-the-fold content",
+        "Keep SWR/TanStack Query for truly dynamic, user-interaction-driven data needs"
+      ],
+      "quickFixes": [
+        "Move the fetch() call to the parent Server Component and pass data as props",
+        "Make the page component async and await the data directly"
+      ],
+      "architectureSuggestions": [
+        "Establish a rule: initial data is always fetched server-side. Client-side fetching is for subsequent mutations and real-time updates only."
+      ],
+      "examples": {
+        "invalid": [
+          "'use client'\nimport { useEffect, useState } from 'react'\nexport default function ProductPage({ id }) { const [product, setProduct] = useState(null); useEffect(() => { fetch(`/api/products/${id}`).then(r => r.json()).then(setProduct) }, [id]); if (!product) return <Skeleton />; return <ProductDetail product={product} /> }"
+        ],
+        "valid": [
+          "// page.tsx (Server Component)\nexport default async function ProductPage({ params }) { const product = await getProduct(params.id); return <ProductDetail product={product} /> }"
+        ]
+      }
+    },
+    {
+      "id": "DF-002",
+      "title": "Use React.cache() to Deduplicate Non-fetch Data Requests",
+      "problem": "When multiple Server Components in the same render tree need the same data (e.g., user session, product details), each component calling the data source independently results in duplicate database queries or API calls within a single request.",
+      "whyItMatters": "React automatically memoizes fetch() requests with the same URL and options within a render pass. But for ORM queries, database clients, and custom async functions, no deduplication occurs by default. Without React.cache(), the same database query may execute dozens of times per request in a complex component tree.",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "Calling the same database query function in multiple components without React.cache() wrapping",
+        "Fetching the same user session in every component that needs it",
+        "Prop-drilling data from a top-level component to avoid duplicate fetches (obscures data dependencies)"
+      ],
+      "allowedPatterns": [
+        "import { cache } from 'react'; export const getUser = cache(async (id) => db.user.findUnique({ where: { id } }))",
+        "Using React.cache() for all data access functions in the Data Access Layer",
+        "Combining React.cache() with 'server-only' for safe, reusable, memoized server data utilities"
+      ],
+      "productionRisks": [
+        "N×M database queries per request where N is the number of components and M is the number of shared data sources",
+        "Database connection pool exhaustion under load",
+        "Increased latency from redundant upstream calls"
+      ],
+      "architectureImplications": [
+        "React.cache() scope is per-render pass (per-request), unlike persistent caches",
+        "A Data Access Layer using React.cache() enables safe co-location of data fetching in each component without performance overhead"
+      ],
+      "optimizationGuidance": [
+        "Wrap all data access functions in the DAL with React.cache()",
+        "This allows any component to call getUser(id) knowing it will only hit the database once per request regardless of how many components call it"
+      ],
+      "quickFixes": [
+        "import { cache } from 'react'; then wrap the data function: export const getData = cache(async (id) => { ... })"
+      ],
+      "architectureSuggestions": [
+        "Build a Data Access Layer (lib/dal.ts) where every exported function is wrapped with React.cache() and import 'server-only', creating a safe, deduplicating, server-only data interface"
+      ],
+      "examples": {
+        "invalid": [
+          "// Called by 5 components — 5 DB queries per request\nexport async function getUser(id) { return db.user.findUnique({ where: { id } }) }"
+        ],
+        "valid": [
+          "import { cache } from 'react'\nimport 'server-only'\n// Called by 5 components — 1 DB query per request\nexport const getUser = cache(async (id: string) => db.user.findUnique({ where: { id } }))"
+        ]
+      }
+    },
+    {
+      "id": "DF-003",
+      "title": "Do Not Call Route Handlers from Server Components",
+      "problem": "Server Components calling internal Route Handlers (fetch('/api/...')) to load data creates an unnecessary HTTP roundtrip through the network stack on the same server.",
+      "whyItMatters": "A Server Component calling its own Route Handler sends an HTTP request from the server back to itself (or to another server instance in distributed deployments). This adds network latency, bypasses the database connection pool optimization, and prevents prerendering. The correct approach is to call the data access function directly.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "fetch('/api/users') inside a Server Component",
+        "fetch('/api/products') inside a Server Component when a direct DB call is available",
+        "Using Route Handlers as an abstraction layer between Server Components and data sources"
+      ],
+      "allowedPatterns": [
+        "Calling data access functions or ORM methods directly in Server Components",
+        "Using Route Handlers only for external API consumers or Client Component fetches",
+        "fetch() to external third-party APIs from Server Components"
+      ],
+      "productionRisks": [
+        "Unnecessary HTTP roundtrip latency (10-100ms overhead per call)",
+        "Loss of prerendering capability",
+        "Increased server load from loopback requests",
+        "Connection pool waste"
+      ],
+      "architectureImplications": [
+        "Route Handlers are for external API consumers, not for Server Component data access",
+        "Server Components have direct server-side access — use it"
+      ],
+      "optimizationGuidance": [
+        "Create a Data Access Layer that can be called directly by Server Components",
+        "Route Handlers delegate to the same DAL functions, not the other way around"
+      ],
+      "quickFixes": [
+        "Replace fetch('/api/data') with direct import and call of the data access function"
+      ],
+      "architectureSuggestions": [
+        "Structure: Server Component → calls DAL function → queries DB. Not: Server Component → fetch('/api') → Route Handler → calls DAL → queries DB."
+      ],
+      "examples": {
+        "invalid": [
+          "export default async function Page() { const res = await fetch('/api/users'); const users = await res.json(); return <UserList users={users} /> } // Unnecessary HTTP hop"
+        ],
+        "valid": [
+          "import { getUsers } from '@/lib/dal'\nexport default async function Page() { const users = await getUsers(); return <UserList users={users} /> }"
+        ]
+      }
+    },
+    {
+      "id": "DF-004",
+      "title": "Use 'use cache' or unstable_cache for Non-fetch Data Sources",
+      "problem": "Database queries, ORM calls, and custom async functions do not benefit from Next.js's extended fetch() caching. Without explicit caching via 'use cache' (Cache Components model) or unstable_cache (legacy model), these operations run on every request.",
+      "whyItMatters": "fetch() is automatically extended by Next.js to participate in the Data Cache. ORM queries (Prisma, Drizzle, TypeORM) and database clients (pg, mysql2) are plain JavaScript calls with no inherent caching. They must be explicitly wrapped to gain persistent caching across requests.",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "ORM queries in Server Components without 'use cache' or unstable_cache when the data is suitable for caching",
+        "Database queries running on every request for data that changes infrequently",
+        "Omitting cacheTag() on cached functions that need on-demand invalidation"
+      ],
+      "allowedPatterns": [
+        "Cache Components model: async function getProducts() { 'use cache'; cacheLife('hours'); cacheTag('products'); return db.select().from(products) }",
+        "Legacy model: unstable_cache(async () => db.select().from(products), ['products'], { tags: ['products'], revalidate: 3600 })",
+        "Combining React.cache() for per-request memoization with unstable_cache for persistent caching"
+      ],
+      "productionRisks": [
+        "Database overload from uncached queries under production traffic",
+        "High latency from per-request database calls for static content",
+        "Missed ISR opportunities for content that changes infrequently"
+      ],
+      "architectureImplications": [
+        "ORM queries require explicit caching annotations — they are not auto-cached like fetch()",
+        "The 'use cache' directive extends caching to any async operation, not just fetch()"
+      ],
+      "optimizationGuidance": [
+        "Classify all ORM/database queries by update frequency and apply appropriate cacheLife profiles",
+        "Add cacheTag() to all cached queries to enable surgical on-demand invalidation after mutations"
+      ],
+      "quickFixes": [
+        "Add 'use cache' and cacheLife() to ORM query functions in the DAL",
+        "Wrap with unstable_cache() for the legacy model"
+      ],
+      "architectureSuggestions": [
+        "Co-locate caching decisions with data access functions in the DAL: each function declares its cache strategy and tags"
+      ],
+      "examples": {
+        "invalid": [
+          "export async function getProducts() { return db.select().from(products) } // Runs on every request"
+        ],
+        "valid": [
+          "export async function getProducts() { 'use cache'; cacheLife('hours'); cacheTag('products'); return db.select().from(products) }"
+        ]
+      }
+    },
+    {
+      "id": "DF-005",
+      "title": "Implement the Preload Pattern for Parallel Data Fetching with Dependencies",
+      "problem": "When one piece of data depends on another (sequential dependency), but other independent data can be fetched in parallel, failing to initiate parallel fetches early causes the overall response to be slower than necessary.",
+      "whyItMatters": "JavaScript's async model allows initiating multiple promises before awaiting any of them. The preload pattern kicks off data fetching before any blocking await, allowing parallel execution even when some sequential logic exists. Missing this optimization causes request waterfalls where sequential awaits compound latency.",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "Awaiting sequential fetches when later fetches could start earlier",
+        "Not starting data fetches until after conditional logic completes when the condition does not affect the data"
+      ],
+      "allowedPatterns": [
+        "Calling preload(id) before any await to kick off background data loading",
+        "Promise.all() for fully independent parallel fetches",
+        "Starting fetches for likely-needed data before confirming they are needed (with proper error handling)"
+      ],
+      "productionRisks": [
+        "Unnecessary request latency from sequential data loading that could be parallel",
+        "P99 latency degradation on pages with multiple data dependencies"
+      ],
+      "architectureImplications": [
+        "The preload pattern works because React.cache() memoizes the result — the preloaded data is reused when the component awaits it later"
+      ],
+      "optimizationGuidance": [
+        "Always check: can I start any fetch earlier? If yes, use Promise.all() or the preload pattern."
+      ],
+      "quickFixes": [
+        "Replace: const a = await fetchA(); const b = await fetchB() With: const [a, b] = await Promise.all([fetchA(), fetchB()])"
+      ],
+      "architectureSuggestions": [
+        "Establish a convention: data dependencies at the top of Server Components are always declared before any await, using Promise.all() for independent fetches"
+      ],
+      "examples": {
+        "invalid": [
+          "const isAvailable = await checkAvailability(id)\nconst item = await getItem(id) // Waits for checkAvailability to finish first — unnecessary"
+        ],
+        "valid": [
+          "preload(id) // Start loading item immediately\nconst isAvailable = await checkAvailability(id)\nconst item = await getItem(id) // Likely already cached from preload"
+        ]
+      }
+    }
+  ]
+}

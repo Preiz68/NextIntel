@@ -1,1 +1,250 @@
-{}
+{
+  "concept": "Client Components",
+  "category": "rendering",
+  "description": "Client Components are React components marked with the 'use client' directive. They run in the browser and are pre-rendered to HTML on the server during the initial page load. They can use React state, effects, event handlers, browser APIs, and custom hooks. The 'use client' directive declares a boundary in the module graph: all imports and directly rendered components within that boundary are pulled into the client JavaScript bundle. Client Components should be treated as interactive leaf nodes in the component tree, not as wrappers for large subtrees.",
+
+  "constraints": [
+    {
+      "id": "CC-001",
+      "title": "'use client' Boundary Pulls All Imports into the Client Bundle",
+      "problem": "Once 'use client' is added to a file, every module imported by that file and every component it directly renders is included in the client JavaScript bundle, regardless of whether those dependencies need browser capabilities.",
+      "whyItMatters": "A single misplaced 'use client' on a large component can inadvertently bundle server-only libraries, large data transformation utilities, or database clients into the client bundle. This inflates bundle size, increases parse time, degrades Core Web Vitals (LCP, TTI), and potentially leaks server-only code.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "Adding 'use client' to layout.tsx or page.tsx when only a sub-component needs interactivity",
+        "Importing server-only utilities into a Client Component file",
+        "Placing 'use client' at the top of a barrel index file that re-exports many components",
+        "Wrapping large content trees in a single Client Component to add one interactive element",
+        "Importing heavy server-side libraries (ORM, fs, crypto) into a 'use client' file"
+      ],
+      "allowedPatterns": [
+        "Isolating 'use client' to the smallest interactive leaf component",
+        "Passing Server Components as children or props into Client Component wrappers",
+        "Using next/dynamic with ssr: false for non-critical client-only components",
+        "Importing only serializable data (strings, numbers, plain objects) from shared modules"
+      ],
+      "productionRisks": [
+        "Massive client JavaScript bundle inflating Time to Interactive (TTI)",
+        "Accidental inclusion of server-only code (database clients, secrets) in the browser bundle",
+        "Poor Lighthouse scores and Core Web Vitals degradation",
+        "Increased bandwidth costs for users on slow connections"
+      ],
+      "architectureImplications": [
+        "Client Components should be fine-grained islands of interactivity",
+        "The majority of a page's component tree should remain as Server Components",
+        "Large layouts should stay as Server Components with small Client Component islands embedded"
+      ],
+      "optimizationGuidance": [
+        "Push 'use client' as far down the tree as possible",
+        "Audit bundle with @next/bundle-analyzer after every new 'use client' boundary",
+        "Use next/dynamic for non-critical Client Components to enable lazy loading"
+      ],
+      "quickFixes": [
+        "Move 'use client' from the layout/page to the specific interactive child component",
+        "Extract just the interactive part (e.g., a search bar) into its own 'use client' file"
+      ],
+      "architectureSuggestions": [
+        "Think of Client Components as 'interactive islands': small, focused, and surrounded by server-rendered content",
+        "Pass all data needed by Client Components as serialized props from their Server Component parents"
+      ],
+      "examples": {
+        "invalid": [
+          "'use client'\n// This pulls everything into the client bundle\nimport Header from './header'\nimport Footer from './footer'\nimport DataTable from './data-table'\nimport { db } from './db' // server-only!\nexport default function Page() { return <div><Header/><DataTable/><Footer/></div> }"
+        ],
+        "valid": [
+          "// page.tsx (Server Component)\nimport DataTable from './data-table' // Server Component\nimport SearchBar from './search-bar' // 'use client'\nexport default async function Page() { const data = await getTableData(); return <div><SearchBar /><DataTable data={data} /></div> }"
+        ]
+      }
+    },
+    {
+      "id": "CC-002",
+      "title": "Props Passed to Client Components Must Be Serializable",
+      "problem": "Props passed from Server Components to Client Components must be serializable by React. Non-serializable values such as functions (other than Server Actions), class instances, Dates, Maps, Sets with complex values, and circular references cannot be passed as props.",
+      "whyItMatters": "The boundary between Server and Client Components requires all data to be serialized into the RSC Payload (a binary wire format). Non-serializable values cannot traverse this boundary and will cause runtime errors or be silently dropped, leading to broken component state on the client.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "Passing functions as props (other than Server Actions)",
+        "Passing class instances as props",
+        "Passing Symbol values as props",
+        "Passing BigInt values as props",
+        "Passing circular reference objects as props",
+        "Passing WeakMap, WeakSet, WeakRef as props",
+        "Passing Error objects as props",
+        "Passing database connection objects as props",
+        "Passing React elements created server-side as non-children props (complex patterns)"
+      ],
+      "allowedPatterns": [
+        "Strings, numbers, booleans, null, undefined",
+        "Plain objects and arrays of serializable values",
+        "Dates (serialized to ISO string)",
+        "Maps and Sets of serializable values",
+        "Server Actions (functions marked 'use server') passed as action props",
+        "JSX passed as children (rendered server-side and included in RSC Payload as rendered output)"
+      ],
+      "productionRisks": [
+        "Silent data loss when non-serializable props are dropped",
+        "Runtime crashes during RSC Payload parsing on the client",
+        "Hydration mismatches from inconsistent server/client data",
+        "Security vulnerabilities from accidentally serializing sensitive objects"
+      ],
+      "architectureImplications": [
+        "The Server-to-Client prop boundary enforces a DTO (Data Transfer Object) pattern naturally",
+        "All data transformation should happen server-side before serialization",
+        "Client Components should receive minimal, clean, flat data structures"
+      ],
+      "optimizationGuidance": [
+        "Always map database/API responses to plain DTOs before passing as props",
+        "Keep Client Component props interfaces simple and flat to reduce serialization overhead"
+      ],
+      "quickFixes": [
+        "Convert class instances to plain objects with JSON.parse(JSON.stringify(obj))",
+        "Move function logic into a Server Action ('use server') if it must be passed as a prop"
+      ],
+      "architectureSuggestions": [
+        "Define explicit TypeScript interface DTOs for all Server-to-Client prop boundaries",
+        "Validate serializable shapes at compile time using TypeScript strict mode"
+      ],
+      "examples": {
+        "invalid": [
+          "// Server Component passing a function prop\nreturn <ClientComp onAction={() => db.update(id)} />"
+        ],
+        "valid": [
+          "// Server Action passed as prop\nasync function handleAction() { 'use server'; await db.update(id) }\nreturn <ClientComp onAction={handleAction} />"
+        ]
+      }
+    },
+    {
+      "id": "CC-003",
+      "title": "Server Components Must Not Be Imported into Client Component Module Graph",
+      "problem": "Server Components (async components, components using server-only APIs) must not be directly imported by Client Components.",
+      "whyItMatters": "When a Client Component imports another component, that import is pulled into the client bundle. If a Server Component is imported this way, Next.js cannot execute server-only code (database access, secret use) on the client and the component will fail. The correct pattern is to pass Server Components as children or props from a parent Server Component.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "import ServerComponent from './server-component' inside a 'use client' file",
+        "Directly importing async Server Components into Client Components",
+        "Importing components that use next/headers, next/cookies, or 'server-only' into Client Components"
+      ],
+      "allowedPatterns": [
+        "Passing Server Components as children: <ClientWrapper><ServerChild /></ClientWrapper>",
+        "Passing Server Components as named props: <ClientWrapper header={<ServerHeader />} />",
+        "Composing the combination from a parent Server Component that controls both"
+      ],
+      "productionRisks": [
+        "Build errors blocking deployment",
+        "Server-only logic being executed on the client, causing authentication bypass or data exposure",
+        "Undefined behavior from async components in a synchronous client rendering context"
+      ],
+      "architectureImplications": [
+        "The interleaving of Server and Client Components must always be orchestrated from a Server Component parent",
+        "Client Components are opaque to their children's rendering environment; Server Components passed as children remain server-rendered"
+      ],
+      "optimizationGuidance": [
+        "Use the children/slot composition pattern to interleave server and client subtrees",
+        "Keep the component tree's outer layers as Server Components to maximize static rendering surface"
+      ],
+      "quickFixes": [
+        "Move the import to a parent Server Component and pass the result as children or a prop",
+        "Wrap the Server Component usage in the parent and thread it as a prop into the Client Component"
+      ],
+      "architectureSuggestions": [
+        "Establish a rule: Client Components never import Server Components. Composition flows top-down from Server Component parents."
+      ],
+      "examples": {
+        "invalid": [
+          "'use client'\nimport ServerCart from './cart' // Server Component - will fail!\nexport default function Modal() { return <div><ServerCart /></div> }"
+        ],
+        "valid": [
+          "// page.tsx (Server Component)\nimport Modal from './modal' // 'use client'\nimport Cart from './cart' // Server Component\nexport default function Page() { return <Modal><Cart /></Modal> }"
+        ]
+      }
+    },
+    {
+      "id": "CC-004",
+      "title": "Third-Party Components Without 'use client' Must Be Wrapped",
+      "problem": "Third-party npm packages that use client-only React features (useState, useEffect, browser APIs) but do not include the 'use client' directive will fail when used directly in Server Components.",
+      "whyItMatters": "Many third-party libraries were built before the React Server Components era and do not declare 'use client'. Next.js cannot automatically infer that these components require client-side execution. Using them in Server Components causes runtime errors.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "Using third-party UI components (carousels, modals, date pickers, charts) that use hooks directly in Server Components without wrapping",
+        "Importing animation libraries (framer-motion, react-spring) without a 'use client' wrapper",
+        "Using form libraries (react-hook-form, formik) without a 'use client' wrapper"
+      ],
+      "allowedPatterns": [
+        "Creating a thin 'use client' wrapper file that re-exports the third-party component",
+        "Using the third-party component inside an existing 'use client' component"
+      ],
+      "productionRisks": [
+        "Runtime errors: 'useState is not defined' or similar",
+        "Broken UI components in production",
+        "Developer confusion about which packages are compatible with Server Components"
+      ],
+      "architectureImplications": [
+        "Every third-party UI component must be audited for server compatibility",
+        "Create a central wrappers/ directory for Client Component wrappers around third-party libraries"
+      ],
+      "optimizationGuidance": [
+        "Create wrapper files early in the project for all major third-party UI dependencies",
+        "Document which wrappers are 'use client' in team conventions"
+      ],
+      "quickFixes": [
+        "Create a new file: 'use client'\nimport { ThirdPartyComp } from 'third-party-lib'\nexport default ThirdPartyComp"
+      ],
+      "architectureSuggestions": [
+        "Maintain a components/wrappers/ directory containing 'use client' thin wrappers for all third-party components that need client-side execution"
+      ],
+      "examples": {
+        "invalid": [
+          "// Server Component\nimport { Carousel } from 'acme-carousel' // no 'use client', uses useState internally\nexport default function Page() { return <Carousel /> } // Runtime error"
+        ],
+        "valid": [
+          "// components/carousel.tsx\n'use client'\nimport { Carousel } from 'acme-carousel'\nexport default Carousel\n\n// page.tsx (Server Component)\nimport Carousel from './components/carousel'\nexport default function Page() { return <Carousel /> }"
+        ]
+      }
+    },
+    {
+      "id": "CC-005",
+      "title": "Avoid Calling Route Handlers from Client Components When Server Components Can Fetch Instead",
+      "problem": "Client Components that fetch data by calling internal Next.js Route Handlers (/api routes) are adding an unnecessary network roundtrip that could be eliminated by fetching in a Server Component.",
+      "whyItMatters": "A Client Component calling a Route Handler on the same Next.js server creates a server-to-server HTTP request (or at best a loopback). This doubles the latency compared to a Server Component directly calling the data source. It also prevents static prerendering of that data.",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "fetch('/api/data') inside a Client Component when the data could be fetched in a parent Server Component",
+        "useEffect(() => { fetch('/api/users') }, []) for initial data loading that could be server-fetched",
+        "Calling Route Handlers from Server Components (creates unnecessary network hop)"
+      ],
+      "allowedPatterns": [
+        "Server Components fetching data directly from databases or external APIs",
+        "Passing fetched data as serialized props to Client Components",
+        "Client Components using SWR or React Query only for client-side data that must be fresh (user interactions, polling)"
+      ],
+      "productionRisks": [
+        "Unnecessary network latency degrading Time to First Byte (TTFB)",
+        "Loss of static prerendering opportunity",
+        "Double data-fetching overhead on the server"
+      ],
+      "architectureImplications": [
+        "Initial data loading is a Server Component responsibility",
+        "Client Components trigger data mutations and handle real-time updates, not initial page data loads"
+      ],
+      "optimizationGuidance": [
+        "Audit all useEffect data-fetching patterns; migrate initial loads to Server Components",
+        "Reserve client-side fetching for truly dynamic data (user-triggered, real-time)"
+      ],
+      "quickFixes": [
+        "Move the fetch call to the parent Server Component and pass data as props to the Client Component"
+      ],
+      "architectureSuggestions": [
+        "Use a Server Component as a data-fetching shell that passes all needed data to Client Component children",
+        "Treat client-side data fetching (SWR, TanStack Query) as an optimization for updates, not initial load"
+      ],
+      "examples": {
+        "invalid": [
+          "'use client'\nimport { useEffect, useState } from 'react'\nexport default function Users() { const [users, setUsers] = useState([]); useEffect(() => { fetch('/api/users').then(r => r.json()).then(setUsers) }, []); return <ul>{users.map(u => <li>{u.name}</li>)}</ul> }"
+        ],
+        "valid": [
+          "// page.tsx (Server Component)\nexport default async function Page() { const users = await db.select().from(usersTable); return <UserList users={users} /> }"
+        ]
+      }
+    }
+  ]
+}

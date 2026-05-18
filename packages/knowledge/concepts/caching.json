@@ -1,130 +1,253 @@
 {
-  "concept": "Client Components",
-  "category": "rendering",
-  "description": "React components that are prerendered on the server and then hydrated on the client. Required for interactivity, browser APIs, and stateful logic. Declared with the 'use client' directive. Establish a client module graph boundary — all imports within that graph are bundled for the client.",
+  "concept": "Caching",
+  "category": "caching",
+  "description": "Next.js has a multi-layered caching system. With Cache Components (cacheComponents: true, the modern model), caching is controlled via the 'use cache' directive, cacheLife(), cacheTag(), revalidateTag(), updateTag(), and Suspense boundaries. Without Cache Components (legacy model), caching is controlled via fetch() options (cache, next.revalidate, next.tags), unstable_cache for non-fetch functions, and route segment config (dynamic, fetchCache, revalidate). The four conceptual cache layers are: Request Memoization (per-render deduplication), Data Cache (persistent across requests), Full Route Cache (static HTML and RSC Payload), and Router Cache (client-side in-memory RSC Payload). Understanding each layer's scope, invalidation mechanism, and interaction is critical for building correct and performant applications.",
 
   "constraints": [
-    "'use client' directive must appear at the top of the file, before any imports",
-    "All modules imported by a Client Component are included in the client JavaScript bundle",
-    "Cannot import Server Components directly — Server Components can only be passed as props (children pattern)",
-    "Cannot use async/await directly in Client Component body for data fetching — use use() API or client-side data libraries",
-    "Cannot access server-only resources (database, file system, secrets) directly",
-    "Props received from Server Components must be serializable",
-    "React context works in Client Components but not in Server Components",
-    "Environment variables without NEXT_PUBLIC_ prefix are replaced with empty string — not available at runtime"
-  ],
-
-  "allowedPatterns": [
-    "useState, useReducer, useContext, useRef, useEffect, useLayoutEffect and all React client hooks",
-    "Browser APIs: window, document, localStorage, sessionStorage, navigator, IntersectionObserver, etc.",
-    "Event handlers: onClick, onChange, onSubmit, onFocus, onBlur, etc.",
-    "React context creation and consumption",
-    "Custom hooks that use any of the above",
-    "Rendering Server Components passed as children or other props",
-    "Streaming data from server using React use() API with a promise passed from a Server Component",
-    "Client-side data fetching with SWR, React Query, or fetch()",
-    "Third-party packages that use client-only APIs",
-    "Wrapping third-party components that lack 'use client' to make them usable in Server Components",
-    "Lazy loading with React.lazy() and Suspense",
-    "Using useRouter, usePathname, useSearchParams, useParams navigation hooks"
-  ],
-
-  "forbiddenPatterns": [
-    "Direct database queries or ORM calls",
-    "File system access (fs module)",
-    "Importing server-only modules — build error if server-only package is used",
-    "Accessing process.env variables without NEXT_PUBLIC_ prefix — silently replaced with empty string",
-    "Importing a Server Component directly (breaks the server/client module graph boundary)",
-    "Using async/await at the top level of a Client Component function body",
-    "Expecting server-side secrets passed as props to remain secret — props are serialized into the page"
-  ],
-
-  "runtimeBehavior": [
-    "Prerendered on the server into HTML on first request — provides non-interactive initial preview",
-    "Hydrated on the client — JavaScript attaches event handlers and makes the component interactive",
-    "On subsequent client-side navigations: rendered entirely on the client without server involvement",
-    "RSC Payload contains placeholders for Client Components plus references to their JS file chunks",
-    "Client Component JS files are downloaded, parsed, and executed during hydration",
-    "'use client' boundary causes all transitive imports in that file's module graph to be included in the client bundle",
-    "Server Components passed as children/props are rendered on the server BEFORE being passed — they are not re-rendered on the client",
-    "Hydration must produce identical output to server-rendered HTML — mismatches cause hydration errors",
-    "useSearchParams must be wrapped in Suspense when used in Client Components to avoid blocking prerendering"
-  ],
-
-  "architectureImplications": [
-    "'use client' is a module graph boundary declaration, not a per-component annotation — it affects all imports",
-    "Push 'use client' as far down the component tree as possible to minimize client bundle size",
-    "Context providers must be Client Components — they should wrap only the subtree that requires context",
-    "Third-party components using client APIs without 'use client' must be re-exported from a wrapper Client Component",
-    "Server Components can be passed into Client Components as props — they remain server-rendered",
-    "Client Component module graph is separate from Server Component module graph — a module imported in both contexts may be bundled twice",
-    "Prop drilling of server data into deeply nested Client Components creates coupling — prefer passing Server Components as children instead"
-  ],
-
-  "performanceImplications": [
-    "Every import in a Client Component's module graph contributes to the client JavaScript bundle",
-    "Marking large layout components as Client Components forces all children into the client bundle",
-    "Tree-shaking only removes unused exports — large client-side dependencies cannot be avoided once imported in client graph",
-    "Hydration cost is proportional to the number and complexity of Client Components in the initial render",
-    "useSearchParams without Suspense wrapper causes the entire route to opt out of static prerendering",
-    "Deferring hydration with lazy() can reduce Time to Interactive for non-critical interactive components",
-    "Client-side data fetching with SWR/React Query introduces additional network waterfalls after initial HTML load"
-  ],
-
-  "commonMisusePatterns": [
-    "Adding 'use client' to a file that doesn't need it — pulls all its imports into the client bundle unnecessarily",
-    "Placing 'use client' on a layout that is mostly static — forces all descendant components into client bundle",
-    "Importing heavy libraries (charting, editors, etc.) inside a Client Component without lazy loading",
-    "Fetching data in Client Components when a Server Component could fetch it without the client-server roundtrip",
-    "Not wrapping useSearchParams in Suspense — causes static prerender of the route to fail silently",
-    "Creating context providers as Server Components — context is client-only",
-    "Using process.env.SECRET in a Client Component — silently resolves to empty string, breaking functionality without error"
-  ],
-
-  "productionRisks": [
-    "Bundle bloat: unrestricted 'use client' propagation can include large server-only libraries in the client bundle",
-    "Hydration mismatch errors: dynamic values (Date.now(), Math.random(), browser-specific data) that differ between server prerender and client hydration cause React warnings and potential UI corruption",
-    "Silent env var failure: non-NEXT_PUBLIC_ env vars silently become empty strings in Client Components — auth tokens, API keys, and config values break without throwing",
-    "Prop serialization errors: passing non-serializable values (functions, Maps, Sets, class instances) from Server to Client Components causes runtime errors",
-    "useSearchParams without Suspense degrades static prerendering to dynamic rendering for the entire route",
-    "Context re-renders: broad context providers that wrap large subtrees cause unnecessary re-renders on any state change"
-  ],
-
-  "relatedConcepts": [
-    "Server Components",
-    "RSC Payload",
-    "Hydration",
-    "use client directive",
-    "React Context",
-    "Streaming",
-    "Suspense",
-    "Module Graph",
-    "Bundle Size",
-    "useRouter",
-    "useSearchParams"
-  ],
-
-  "examples": {
-    "valid": [
-      "// Minimal Client Component — only interactive leaf\n'use client'\nimport { useState } from 'react'\nexport default function LikeButton({ likes }) {\n  const [count, setCount] = useState(likes)\n  return <button onClick={() => setCount(c => c + 1)}>{count}</button>\n}",
-
-      "// Context provider as Client Component\n'use client'\nimport { createContext, useState } from 'react'\nexport const ThemeContext = createContext({})\nexport default function ThemeProvider({ children }) {\n  return <ThemeContext.Provider value=\"dark\">{children}</ThemeContext.Provider>\n}",
-
-      "// Wrapping third-party component that lacks 'use client'\n'use client'\nimport { Carousel } from 'acme-carousel'\nexport default Carousel  // re-export from client boundary",
-
-      "// Streaming server data into Client Component with use()\n'use client'\nimport { use } from 'react'\nexport default function Posts({ posts }) {  // posts is a Promise\n  const allPosts = use(posts)              // suspends until resolved\n  return <ul>{allPosts.map(p => <li key={p.id}>{p.title}</li>)}</ul>\n}",
-
-      "// useSearchParams wrapped in Suspense (required)\nimport { Suspense } from 'react'\nimport SearchResults from './search-results' // 'use client' + useSearchParams\nexport default function Page() {\n  return <Suspense fallback={<div>Loading...</div>}><SearchResults /></Suspense>\n}"
-    ],
-
-    "invalid": [
-      "// 'use client' on root layout — entire app bundled as client JS\n'use client'\nexport default function RootLayout({ children }) {\n  return <html><body>{children}</body></html>  // ANTI-PATTERN\n}",
-
-      "// Accessing server secret in Client Component — silently empty\n'use client'\nexport default function Page() {\n  const key = process.env.API_KEY  // '' in client — silent failure\n  return <div>{key}</div>\n}",
-
-      "// Directly importing a Server Component into a Client Component\n'use client'\nimport ServerComp from './server-comp'  // ERROR: breaks module graph\nexport default function Client() {\n  return <ServerComp />  // use children prop pattern instead\n}",
-
-      "// useSearchParams without Suspense — degrades to dynamic rendering\n'use client'\nimport { useSearchParams } from 'next/navigation'\nexport default function Page() {\n  const params = useSearchParams()  // Missing Suspense boundary — ERROR\n  return <div>{params.get('q')}</div>\n}"
-    ]
-  }
+    {
+      "id": "CA-001",
+      "title": "fetch() Requests Are Not Cached by Default in Modern Next.js",
+      "problem": "In the current Next.js model, fetch() requests are not cached by default. Developers who assume all fetch calls are cached (from older documentation) will serve uncached, fresh data on every request, eliminating the performance benefits of static prerendering.",
+      "whyItMatters": "Without explicit caching, every incoming request triggers a fresh fetch to the upstream data source. At scale, this means O(requests * data_sources) upstream calls, increasing latency, cost, and the risk of rate-limiting by external APIs. Prerendering opportunities are lost when data is not cacheable.",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "Assuming fetch() is cached without explicitly setting cache: 'force-cache' or next.revalidate",
+        "Fetching the same data in multiple components without using React.cache() for deduplication",
+        "Omitting 'use cache' directive when data is suitable for caching across requests",
+        "Using unstable_cache without understanding its invalidation semantics"
+      ],
+      "allowedPatterns": [
+        "fetch(url, { cache: 'force-cache' }) for data that rarely changes",
+        "fetch(url, { next: { revalidate: 3600 } }) for time-based revalidation (ISR semantics)",
+        "fetch(url, { next: { tags: ['tag'] } }) combined with revalidateTag() for on-demand invalidation",
+        "'use cache' directive with cacheLife() for both data and UI component caching",
+        "unstable_cache() for ORM/database queries in the legacy model",
+        "React.cache() for per-request memoization of non-fetch data sources"
+      ],
+      "productionRisks": [
+        "Excessive upstream API calls leading to rate limiting",
+        "High database load from uncached queries",
+        "Increased latency for every page request",
+        "Higher infrastructure costs",
+        "Loss of static prerendering benefits"
+      ],
+      "architectureImplications": [
+        "Every data fetch in a Server Component should have an explicit caching decision",
+        "Shared data (fetched in multiple components) must use React.cache() or 'use cache' to deduplicate",
+        "Static content should be fully prerendered; dynamic content should be wrapped in Suspense"
+      ],
+      "optimizationGuidance": [
+        "Classify all data as: static (cache indefinitely), time-sensitive (ISR with revalidate), user-specific (no cache or short cache with tags), or real-time (no cache with Suspense streaming)",
+        "Use 'use cache' with cacheLife('hours') or cacheLife('days') for content that changes infrequently"
+      ],
+      "quickFixes": [
+        "Add { cache: 'force-cache' } to fetch calls for stable data",
+        "Add { next: { revalidate: 3600 } } for hourly revalidation",
+        "Add 'use cache' to data functions or components that should be cached"
+      ],
+      "architectureSuggestions": [
+        "Establish a team convention: every data-fetching function must document its cache strategy in a comment",
+        "Create a central data access layer where caching decisions are co-located with the data fetching logic"
+      ],
+      "examples": {
+        "invalid": [
+          "export async function getProducts() { return fetch('https://api.example.com/products').then(r => r.json()) } // Uncached, runs on every request"
+        ],
+        "valid": [
+          "export async function getProducts() { 'use cache'; cacheLife('hours'); cacheTag('products'); return fetch('https://api.example.com/products').then(r => r.json()) }"
+        ]
+      }
+    },
+    {
+      "id": "CA-002",
+      "title": "Revalidation Must Be Triggered from Server Actions or Route Handlers Only",
+      "problem": "revalidateTag() and revalidatePath() can only be called from Server Actions or Route Handlers, not from Server Component render functions.",
+      "whyItMatters": "Calling revalidation functions during render creates a feedback loop: rendering triggers revalidation, which triggers re-rendering. This is prevented by Next.js, but attempting it causes errors. Proper cache invalidation is always event-driven (user action, webhook, scheduled job), not render-driven.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "revalidateTag() inside a Server Component body",
+        "revalidatePath() inside a Server Component body",
+        "revalidateTag() inside a Client Component",
+        "revalidatePath() inside a useEffect",
+        "Calling revalidation during a GET Route Handler in response to read operations"
+      ],
+      "allowedPatterns": [
+        "revalidateTag('posts') inside a Server Action after a data mutation",
+        "revalidatePath('/blog') inside a Server Action after content update",
+        "revalidateTag() inside a POST/PUT/DELETE Route Handler (webhook receiver)",
+        "updateTag() inside a Server Action for immediate read-your-own-writes scenarios"
+      ],
+      "productionRisks": [
+        "Runtime errors blocking page rendering",
+        "Infinite revalidation loops degrading server performance",
+        "Stale data served if revalidation is called in the wrong context and silently fails"
+      ],
+      "architectureImplications": [
+        "Cache invalidation is architecturally tied to mutation events, not read events",
+        "The mutation → revalidation → re-render cycle is the core App Router data mutation pattern"
+      ],
+      "optimizationGuidance": [
+        "Always pair every Server Action that mutates data with the minimum necessary revalidateTag() calls",
+        "Prefer revalidateTag() over revalidatePath() for surgical cache invalidation to avoid unnecessarily purging cached routes"
+      ],
+      "quickFixes": [
+        "Move the revalidateTag() call into the Server Action that performs the mutation",
+        "For webhooks, create a POST Route Handler that calls revalidateTag()"
+      ],
+      "architectureSuggestions": [
+        "Define cache tags that map to business entities (e.g., 'product', 'user', 'post') and tag all fetches for that entity, enabling surgical invalidation with a single revalidateTag() call"
+      ],
+      "examples": {
+        "invalid": [
+          "export default async function Page() { revalidateTag('products'); // ERROR: cannot call during render\nconst products = await getProducts(); return <ProductList products={products} /> }"
+        ],
+        "valid": [
+          "async function updateProduct(id, data) { 'use server'; await db.update(id, data); revalidateTag('products'); revalidatePath('/products') }"
+        ]
+      }
+    },
+    {
+      "id": "CA-003",
+      "title": "Runtime APIs Opt Routes Out of Full Route Cache",
+      "problem": "Using runtime APIs (cookies(), headers(), searchParams) in a Server Component without Suspense wrapping causes the entire route to be dynamically rendered, disabling Full Route Cache (static HTML prerendering).",
+      "whyItMatters": "Static routes are prerendered at build time and served from CDN with zero server compute cost. A single call to cookies() or headers() at the top level of a page forces every request to go to the server and re-render. This increases cost, latency, and server load at scale.",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "Calling cookies() at the top level of a layout.tsx (opts the entire app into dynamic rendering)",
+        "Calling headers() directly in a Server Component that could otherwise be static",
+        "Accessing searchParams directly in page.tsx without Suspense wrapping",
+        "Using dynamic route params without generateStaticParams when static generation is desired"
+      ],
+      "allowedPatterns": [
+        "Wrapping components that use runtime APIs in <Suspense> boundaries to enable Partial Prerendering (PPR)",
+        "Extracting runtime API access into a child component wrapped in Suspense",
+        "Passing runtime values as arguments to 'use cache' functions to parameterize the cache key",
+        "Using generateStaticParams() to statically generate dynamic route variants at build time"
+      ],
+      "productionRisks": [
+        "Entire app rendered dynamically because cookies() is called in root layout",
+        "Loss of CDN cacheability for routes that could be static",
+        "Increased server costs proportional to traffic",
+        "Higher TTFB for every request compared to a CDN-cached static response"
+      ],
+      "architectureImplications": [
+        "Root layouts should never access runtime APIs unless the entire app is intended to be dynamic",
+        "PPR (Partial Prerendering) allows mixing static shells with dynamic streamed components",
+        "The architecture goal is to maximize the static shell and minimize the dynamic portions"
+      ],
+      "optimizationGuidance": [
+        "Move runtime API access as deep into the component tree as possible",
+        "Wrap runtime API consumers in <Suspense> to leverage PPR and keep the outer shell static",
+        "Use generateStaticParams() for all known dynamic route values to enable static generation"
+      ],
+      "quickFixes": [
+        "Move cookies()/headers() calls from layout.tsx to a child component wrapped in <Suspense>",
+        "Extract the dynamic section into a separate component and wrap with <Suspense fallback={...}>"
+      ],
+      "architectureSuggestions": [
+        "Adopt a PPR-first architecture: design every page as a static shell with dynamic holes wrapped in Suspense",
+        "Treat dynamic rendering as an explicit opt-in, not the default"
+      ],
+      "examples": {
+        "invalid": [
+          "// app/layout.tsx\nimport { cookies } from 'next/headers'\nexport default async function RootLayout({ children }) { const theme = (await cookies()).get('theme'); return <html data-theme={theme}><body>{children}</body></html> } // Entire app is now dynamic!"
+        ],
+        "valid": [
+          "// app/components/theme-wrapper.tsx\nimport { cookies } from 'next/headers'\nexport async function ThemeWrapper({ children }) { const theme = (await cookies()).get('theme'); return <div data-theme={theme}>{children}</div> }\n// In layout: <Suspense fallback={<div data-theme='light'>}><ThemeWrapper>{children}</ThemeWrapper></Suspense>"
+        ]
+      }
+    },
+    {
+      "id": "CA-004",
+      "title": "Router Cache Serves Stale Data Until Automatic Expiration",
+      "problem": "The client-side Router Cache stores RSC Payload for visited routes and prefetched pages. After a Server Action mutation, the Router Cache may continue serving stale data on client-side navigation until it expires or is explicitly invalidated.",
+      "whyItMatters": "The Router Cache is an in-memory client-side cache with a minimum 30-second stale time enforced by the client router. Mutations performed via Server Actions automatically invalidate the Data Cache and Full Route Cache, but the Router Cache requires a full page reload or explicit revalidation to clear, potentially showing stale data to users navigating between routes.",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "Expecting Router Cache to update immediately after revalidatePath() in a Route Handler (Route Handlers do not clear Router Cache immediately)",
+        "Relying on automatic Router Cache expiration for time-critical UX updates",
+        "Using router.refresh() as the primary solution for all stale data issues instead of proper revalidation"
+      ],
+      "allowedPatterns": [
+        "revalidatePath() and revalidateTag() inside Server Actions to clear Data Cache + trigger Router Cache invalidation on next navigation",
+        "router.refresh() from Client Components to force a fresh RSC Payload fetch",
+        "Hard navigation (full page reload) for guaranteed cache clearing",
+        "Using updateTag() in Server Actions for immediate expiration in read-your-own-writes scenarios"
+      ],
+      "productionRisks": [
+        "Users see stale data after mutations when navigating back to a page",
+        "Confusing UX: a user creates a post, navigates back, and does not see it",
+        "Difficult-to-reproduce bugs dependent on navigation history"
+      ],
+      "architectureImplications": [
+        "Server Actions are the preferred mutation mechanism because they automatically coordinate Data Cache and Router Cache invalidation",
+        "Route Handlers only clear Data Cache, not Router Cache"
+      ],
+      "optimizationGuidance": [
+        "Prefer Server Actions over Route Handlers for mutations that affect displayed UI",
+        "Use redirect() after a Server Action mutation to force a fresh navigation to the updated page"
+      ],
+      "quickFixes": [
+        "Add router.refresh() in Client Components after a mutation that must be reflected immediately",
+        "Call revalidatePath() from the Server Action after the mutation"
+      ],
+      "architectureSuggestions": [
+        "Design mutation flows as: Server Action → mutate data → revalidateTag() → redirect() to fresh route for guaranteed cache coherence"
+      ],
+      "examples": {
+        "invalid": [],
+        "valid": [
+          "async function createPost(formData) { 'use server'; await db.post.create({ data: { title: formData.get('title') } }); revalidateTag('posts'); redirect('/posts') }"
+        ]
+      }
+    },
+    {
+      "id": "CA-005",
+      "title": "Uncached Data Outside Suspense Blocks Prerendering (Cache Components Mode)",
+      "problem": "When cacheComponents: true is enabled, accessing uncached or runtime data outside of a <Suspense> boundary or 'use cache' scope causes a build-time error: 'Uncached data was accessed outside of Suspense'.",
+      "whyItMatters": "With Cache Components, Next.js enforces explicit handling of all data access patterns at build time. Any component that accesses non-deterministic or runtime data must either cache it ('use cache') or stream it (Suspense). This prevents accidental dynamic rendering of what should be static routes.",
+      "severity": "error",
+      "forbiddenPatterns": [
+        "Accessing cookies(), headers(), or searchParams outside of a <Suspense> boundary without 'use cache'",
+        "Calling fetch() without 'use cache' and without Suspense wrapping",
+        "Querying a database without 'use cache' and without Suspense wrapping",
+        "Placing a <Suspense> with an empty fallback (null) at the root layout body, which defers the entire app to request time"
+      ],
+      "allowedPatterns": [
+        "Wrapping dynamic data consumers in <Suspense fallback={<Skeleton />}>",
+        "Using 'use cache' on data functions and components for cached prerendering",
+        "Using connection() before non-deterministic operations to explicitly opt into request-time rendering",
+        "Passing runtime values as arguments to 'use cache' functions"
+      ],
+      "productionRisks": [
+        "Build failures blocking deployment",
+        "Accidental full-page dynamic rendering when only a portion needed to be dynamic",
+        "Performance regression from losing the static shell on routes that should be mostly static"
+      ],
+      "architectureImplications": [
+        "PPR requires every dynamic data access to be bounded by either Suspense or 'use cache'",
+        "The static shell is everything outside Suspense boundaries with 'use cache' components",
+        "An empty Suspense fallback at root layout opts out of the static shell entirely"
+      ],
+      "optimizationGuidance": [
+        "Always provide a meaningful fallback UI in Suspense boundaries — it becomes the static shell content",
+        "Use 'use cache' for shared, reusable data (blog posts, products) and Suspense for user-specific data (preferences, cart)"
+      ],
+      "quickFixes": [
+        "Wrap the component accessing runtime data in <Suspense fallback={<Loading />}>",
+        "Add 'use cache' to the function accessing the data if it is safe to cache"
+      ],
+      "architectureSuggestions": [
+        "Architect pages as: static header (no Suspense needed) + cached dynamic content ('use cache' components) + runtime user content (Suspense + streaming)"
+      ],
+      "examples": {
+        "invalid": [
+          "import { cookies } from 'next/headers'\nexport default async function Page() { const theme = (await cookies()).get('theme'); return <div data-theme={theme}>Content</div> } // ERROR in Cache Components mode: uncached runtime access outside Suspense"
+        ],
+        "valid": [
+          "import { Suspense } from 'react'\nimport { cookies } from 'next/headers'\nasync function ThemeContent() { const theme = (await cookies()).get('theme'); return <div data-theme={theme}>Content</div> }\nexport default function Page() { return <Suspense fallback={<div>Loading...</div>}><ThemeContent /></Suspense> }"
+        ]
+      }
+    }
+  ]
 }
