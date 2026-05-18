@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
-import { analyzeFiles } from "engine";
-import { RuleEngine, rules, Diagnostic as RuleDiagnostic } from "rules";
+import { analyzeFiles, analyzeFile } from "engine";
+import { RuleEngine, rules, Diagnostic as RuleDiagnostic, KnowledgeRegistry } from "rules";
 
 // Rule IDs — must exactly match rule definitions in packages/rules/src/
 const RSC_BOUNDARY_RULE_IDS = new Set([
@@ -28,6 +28,9 @@ export function activate(context: vscode.ExtensionContext) {
     ruleEngine.registerRule(rule);
   }
 
+  // Store rich diagnostics for Hover and Code Actions
+  const documentDiagnostics = new Map<string, RuleDiagnostic[]>();
+
   // ─── Debounced Refresh ──────────────────────────────────────────────────────
   let timeout: ReturnType<typeof setTimeout> | undefined;
 
@@ -50,7 +53,9 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     try {
-      const analyses = await analyzeFiles([document.fileName]);
+      // Use real-time unsaved document text!
+      const analysis = await analyzeFile(document.fileName, { fileContent: document.getText() });
+      const analyses = [analysis];
 
       const diagnostics = ruleEngine.run({
         analyses,
@@ -58,6 +63,9 @@ export function activate(context: vscode.ExtensionContext) {
         nodes: new Map(),
         edges: [],
       });
+
+      // Save rich diagnostics for hover provider
+      documentDiagnostics.set(document.uri.toString(), diagnostics);
 
       const vscodeDiagnostics: vscode.Diagnostic[] = diagnostics.map(
         (d: RuleDiagnostic) => {
@@ -104,31 +112,46 @@ export function activate(context: vscode.ExtensionContext) {
         context: vscode.CodeActionContext,
       ) {
         const actions: vscode.CodeAction[] = [];
+        const fileDiagnostics = documentDiagnostics.get(document.uri.toString()) || [];
 
         for (const diagnostic of context.diagnostics) {
           if (diagnostic.source !== "NextIntel") {
             continue;
           }
-          if (!RSC_BOUNDARY_RULE_IDS.has(String(diagnostic.code))) {
-            continue;
-          }
 
-          // Guard: don't add "use client" if it's already there
-          const firstLine = document.lineAt(0).text.trim();
-          if (firstLine === '"use client";' || firstLine === "'use client';") {
-            continue;
-          }
-
-          const action = new vscode.CodeAction(
-            'Add "use client" directive',
-            vscode.CodeActionKind.QuickFix,
+          // 1. Dynamic Quick Fixes from Knowledge Pack
+          const ruleDiag = fileDiagnostics.find(d => 
+            d.ruleId === diagnostic.code && 
+            Math.max(0, (d.line ?? 1) - 1) === diagnostic.range.start.line
           );
-          const edit = new vscode.WorkspaceEdit();
-          edit.insert(document.uri, new vscode.Position(0, 0), '"use client";\n\n');
-          action.edit = edit;
-          action.diagnostics = [diagnostic];
-          action.isPreferred = true;
-          actions.push(action);
+
+          if (ruleDiag?.quickFixes) {
+            for (const fix of ruleDiag.quickFixes) {
+              const action = new vscode.CodeAction(
+                `💡 ${fix}`,
+                vscode.CodeActionKind.QuickFix,
+              );
+              action.diagnostics = [diagnostic];
+              actions.push(action);
+            }
+          }
+
+          // 2. Automated Text Edit for 'use client' (Specific behavior)
+          if (RSC_BOUNDARY_RULE_IDS.has(String(diagnostic.code))) {
+            const firstLine = document.lineAt(0).text.trim();
+            if (firstLine !== '"use client";' && firstLine !== "'use client';") {
+              const action = new vscode.CodeAction(
+                '⚡ Auto-fix: Add "use client" directive',
+                vscode.CodeActionKind.QuickFix,
+              );
+              const edit = new vscode.WorkspaceEdit();
+              edit.insert(document.uri, new vscode.Position(0, 0), '"use client";\n\n');
+              action.edit = edit;
+              action.diagnostics = [diagnostic];
+              action.isPreferred = true;
+              actions.push(action);
+            }
+          }
         }
 
         return actions;
@@ -139,9 +162,74 @@ export function activate(context: vscode.ExtensionContext) {
     },
   );
 
+  // ─── Hover Provider (Rich Metadata) ─────────────────────────────────────────
+  const hoverProvider = vscode.languages.registerHoverProvider(
+    Array.from(SUPPORTED_LANGUAGES).map((lang) => ({ scheme: "file", language: lang })),
+    {
+      provideHover(document, position) {
+        const fileDiagnostics = documentDiagnostics.get(document.uri.toString());
+        if (!fileDiagnostics) {
+          return null;
+        }
+
+        const hovers: vscode.MarkdownString[] = [];
+
+        for (const d of fileDiagnostics) {
+          const line = Math.max(0, (d.line ?? 1) - 1);
+          if (position.line !== line) {
+            continue;
+          }
+
+          const markdown = new vscode.MarkdownString();
+          markdown.isTrusted = true;
+          markdown.supportHtml = true;
+
+          markdown.appendMarkdown(`### ⚠️ NextIntel: ${d.message}\n\n`);
+          
+          if (d.whyItMatters) {
+            markdown.appendMarkdown(`**💡 Why It Matters:**\n${d.whyItMatters}\n\n`);
+          }
+          if (d.architectureSuggestions?.length) {
+            markdown.appendMarkdown(`**🏗️ Architecture Suggestions:**\n`);
+            d.architectureSuggestions.forEach(s => markdown.appendMarkdown(`- ${s}\n`));
+            markdown.appendMarkdown(`\n`);
+          }
+          if (d.optimizationGuidance?.length) {
+            markdown.appendMarkdown(`**⚡ Optimization Guidance:**\n`);
+            d.optimizationGuidance.forEach(s => markdown.appendMarkdown(`- ${s}\n`));
+            markdown.appendMarkdown(`\n`);
+          }
+          if (d.productionRisks?.length) {
+            markdown.appendMarkdown(`**🔥 Production Risks:**\n`);
+            d.productionRisks.forEach(s => markdown.appendMarkdown(`- ${s}\n`));
+            markdown.appendMarkdown(`\n`);
+          }
+          if (d.examples?.invalid?.length || d.examples?.valid?.length) {
+            markdown.appendMarkdown(`**✅ Examples:**\n`);
+            if (d.examples.invalid?.length) {
+              markdown.appendMarkdown(`*Invalid:*\n\`\`\`typescript\n${d.examples.invalid[0]}\n\`\`\`\n`);
+            }
+            if (d.examples.valid?.length) {
+              markdown.appendMarkdown(`*Valid:*\n\`\`\`typescript\n${d.examples.valid[0]}\n\`\`\`\n`);
+            }
+          }
+
+          hovers.push(markdown);
+        }
+
+        if (hovers.length === 0) {
+          return null;
+        }
+
+        return new vscode.Hover(hovers);
+      }
+    }
+  );
+
   // ─── Clear diagnostics for closed files ─────────────────────────────────────
   const onCloseListener = vscode.workspace.onDidCloseTextDocument((doc) => {
     diagnosticCollection.delete(doc.uri);
+    documentDiagnostics.delete(doc.uri.toString());
   });
 
   // ─── Subscriptions ───────────────────────────────────────────────────────────
@@ -149,7 +237,9 @@ export function activate(context: vscode.ExtensionContext) {
     diagnosticCollection,
     outputChannel,
     fixProvider,
+    hoverProvider,
     onCloseListener,
+    vscode.workspace.onDidChangeTextDocument((e) => triggerRefresh(e.document)),
     vscode.workspace.onDidSaveTextDocument((doc) => triggerRefresh(doc)),
     vscode.workspace.onDidOpenTextDocument((doc) => triggerRefresh(doc)),
     vscode.window.onDidChangeActiveTextEditor((editor) => {

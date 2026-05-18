@@ -105,6 +105,7 @@ function resolveScriptKind(filePath: string): ScriptKind {
 
 export interface AnalyzeOptions {
   tsConfigPath?: string;
+  fileContent?: string;
 }
 
 /**
@@ -121,7 +122,7 @@ export async function analyzeFile(
 ): Promise<SemanticFileAnalysis> {
   const errors: string[] = [];
 
-  if (!fs.existsSync(filePath)) {
+  if (!options.fileContent && !fs.existsSync(filePath)) {
     throw new Error(`[analyzeFile] File not found: ${filePath}`);
   }
 
@@ -131,22 +132,31 @@ export async function analyzeFile(
     const project = getProject(options.tsConfigPath);
     const scriptKind = resolveScriptKind(filePath);
 
-    // Use addSourceFileAtPath so ts-morph handles reading from disk.
     const existingFile = project.getSourceFile(filePath);
-    if (existingFile) {
-      await existingFile.refreshFromFileSystem();
-      sourceFile = existingFile;
+    
+    if (options.fileContent !== undefined) {
+      if (existingFile) {
+        existingFile.replaceWithText(options.fileContent);
+        sourceFile = existingFile;
+      } else {
+        sourceFile = project.createSourceFile(filePath, options.fileContent, { overwrite: true, scriptKind });
+      }
     } else {
-      sourceFile = project.addSourceFileAtPath(filePath);
-    }
+      if (existingFile) {
+        await existingFile.refreshFromFileSystem();
+        sourceFile = existingFile;
+      } else {
+        sourceFile = project.addSourceFileAtPath(filePath);
+      }
 
-    // Re-add with explicit script kind if extension is ambiguous.
-    if (!sourceFile) {
-      sourceFile = project.createSourceFile(
-        filePath,
-        fs.readFileSync(filePath, "utf8"),
-        { scriptKind, overwrite: true },
-      );
+      // Re-add with explicit script kind if extension is ambiguous.
+      if (!sourceFile) {
+        sourceFile = project.createSourceFile(
+          filePath,
+          fs.readFileSync(filePath, "utf8"),
+          { scriptKind, overwrite: true },
+        );
+      }
     }
   } catch (err: any) {
     throw new Error(

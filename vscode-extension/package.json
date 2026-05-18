@@ -2,7 +2,7 @@
   "name": "next-intel",
   "displayName": "Next Intel",
   "description": "NextIntel is a high-performance static analysis extension specifically architected for the Next.js App Router. It scans your codebase in real-time to ensure your application follows best practices for architecture, performance, and the React Server Components (RSC) paradigm.",
-  "version": "1.0.4",
+  "version": "2.0.0",
   "engines": {
     "vscode": "^1.120.0"
   },
@@ -10,7 +10,7 @@
   "icon": "icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Preiz68/next-intel"
+    "url": "https://github.com/Preiz68/NextIntel"
   },
   "categories": [
     "Linters",
