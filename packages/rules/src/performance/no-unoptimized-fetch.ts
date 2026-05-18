@@ -70,7 +70,7 @@ export const noUnoptimizedFetch: Rule = {
       if (analysis.isClientComponent) continue;
 
       for (const f of analysis.fetchCalls) {
-        if (f.hasCacheConfig || f.hasRevalidate) continue;
+        if (f.cacheStrategy !== "implicit-dynamic") continue;
 
         diagnostics.push({
           file: analysis.filePath,

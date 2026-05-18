@@ -1,4 +1,4 @@
-import type { FileAnalysis, GraphNode } from "../../engine/src/index.js";
+import type { SemanticFileAnalysis, GraphNode } from "../../engine/src/index.js";
 import type { Graph } from "graphlib";
 import type { KnowledgeRegistry } from "./knowledge/registry.js";
 
@@ -64,7 +64,7 @@ export interface Diagnostic {
 // ---------------------------------------------------------------------------
 
 export interface RuleContext {
-  analyses: FileAnalysis[];
+  analyses: SemanticFileAnalysis[];
   graph: Graph;
   nodes: Map<string, GraphNode>;
   edges: any[];

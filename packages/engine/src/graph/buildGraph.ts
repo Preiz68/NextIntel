@@ -2,7 +2,7 @@ import { Graph } from "graphlib";
 import path from "node:path";
 import fs from "node:fs";
 
-import type { FileAnalysis } from "../analyzer/types.js";
+import type { SemanticFileAnalysis } from "../classifier/types.js";
 import type { GraphEdge, GraphNode } from "./types.js";
 import { EXTERNAL_MODULE_PREFIXES, KIND_PATTERNS } from "./constants.js";
 
@@ -86,7 +86,7 @@ export interface BuildGraphResult {
 }
 
 export function buildGraph(
-  analyses: FileAnalysis[],
+  analyses: SemanticFileAnalysis[],
   projectRoot: string,
 ): BuildGraphResult {
   const graph = new Graph({
@@ -105,12 +105,13 @@ export function buildGraph(
       id: analysis.filePath,
       filePath: analysis.filePath,
       isClientComponent: analysis.isClientComponent,
-      // Infer server component from file extension + absence of "use client".
-      isServerComponent:
-        analysis.isServerComponent ||
-        inferIsServerComponent(analysis.filePath, analysis.isClientComponent),
+      isServerComponent: analysis.isServerComponent,
       hasDefaultExport: analysis.exports.includes("default"),
-      kind: classifyKind(analysis.filePath),
+      kind: analysis.semanticKind as any, // preserved for backwards compatibility
+      semanticKind: analysis.semanticKind,
+      runtime: analysis.runtime,
+      renderingMode: analysis.rendering.mode,
+      isHydrationBoundary: analysis.hydration.isHydrationBoundary,
     };
 
     nodes.set(analysis.filePath, node);
@@ -137,6 +138,10 @@ export function buildGraph(
           isServerComponent: inferIsServerComponent(resolved, false),
           hasDefaultExport: false,
           kind: classifyKind(resolved),
+          semanticKind: classifyKind(resolved) as any,
+          runtime: "server",
+          renderingMode: "static",
+          isHydrationBoundary: false,
         };
         nodes.set(resolved, node);
         graph.setNode(resolved, node);

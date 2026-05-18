@@ -1,9 +1,19 @@
+import type { SemanticKind, RuntimeContext, RenderingSemantics } from "../classifier/types.js";
+
 export interface GraphNode {
   id: string;
   filePath: string;
   isClientComponent: boolean;
   isServerComponent: boolean;
   hasDefaultExport: boolean;
+  
+  // Semantic framework properties
+  semanticKind: SemanticKind;
+  runtime: RuntimeContext;
+  renderingMode: RenderingSemantics["mode"];
+  isHydrationBoundary: boolean;
+  
+  // Note: we preserve 'kind' for backwards compatibility, but map it from semanticKind where possible
   kind: "page" | "component" | "hook" | "util" | "action" | "unknown";
 }
 

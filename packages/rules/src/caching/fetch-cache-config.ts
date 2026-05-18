@@ -29,7 +29,7 @@ export const fetchCacheConfig: Rule = {
       if (analysis.isClientComponent) continue;
 
       for (const fetchCall of analysis.fetchCalls) {
-        if (fetchCall.hasCacheConfig || fetchCall.hasRevalidate) continue;
+        if (fetchCall.cacheStrategy !== "implicit-dynamic") continue;
 
         diagnostics.push({
           file: analysis.filePath,

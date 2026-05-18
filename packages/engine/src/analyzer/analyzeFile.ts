@@ -8,6 +8,17 @@ import { extractHooks } from "./extractHooks.js";
 import { extractFetchCalls } from "./extractFetch.js";
 import { extractBrowserAPIs } from "./extractBrowserApis.js";
 import type { FileAnalysis } from "./types.js";
+import type { SemanticFileAnalysis } from "../classifier/types.js";
+import { 
+  detectSemanticKind, 
+  detectRuntime, 
+  detectRenderingMode, 
+  detectHydration 
+} from "../classifier/index.js";
+import { 
+  evaluateFetchSemantics, 
+  attachConstraints 
+} from "../intelligence/index.js";
 
 // ─── Shared Project instance (reused across calls for performance) ────────────
 
@@ -98,8 +109,8 @@ export interface AnalyzeOptions {
 
 /**
  * Analyse a single TypeScript / JavaScript file and return a strongly typed
- * `FileAnalysis` object describing its imports, exports, hooks, fetch calls,
- * browser API usage, and client/server classification.
+ * SemanticFileAnalysis object describing its imports, exports, hooks, fetch calls,
+ * browser API usage, client/server classification, and Next.js semantics.
  *
  * @param filePath - Absolute path to the file.
  * @param options  - Optional path to the project's tsconfig.json.
@@ -107,7 +118,7 @@ export interface AnalyzeOptions {
 export async function analyzeFile(
   filePath: string,
   options: AnalyzeOptions = {},
-): Promise<FileAnalysis> {
+): Promise<SemanticFileAnalysis> {
   const errors: string[] = [];
 
   if (!fs.existsSync(filePath)) {
@@ -189,9 +200,9 @@ export async function analyzeFile(
     errors.push(`async: ${e.message}`);
   }
 
-  // ── Assemble result ──────────────────────────────────────────────────────
+  // ── Assemble raw AST result ──────────────────────────────────────────────
 
-  return {
+  const rawAnalysis: FileAnalysis = {
     filePath,
     isClientComponent: directive.isClient,
     isServerComponent: directive.isServer,
@@ -207,6 +218,30 @@ export async function analyzeFile(
     hasAsyncComponent,
     errors,
   };
+
+  // ── Apply Semantic Classification & Intelligence ─────────────────────────
+
+  const enhancedFetchCalls = evaluateFetchSemantics(rawAnalysis.fetchCalls, rawAnalysis.isClientComponent);
+  const semanticKind = detectSemanticKind(rawAnalysis);
+  const runtime = detectRuntime(rawAnalysis);
+  const rendering = detectRenderingMode(rawAnalysis);
+  const hydration = detectHydration(rawAnalysis);
+
+  const enrichedPayload: Omit<SemanticFileAnalysis, "violatedConstraints"> = {
+    ...rawAnalysis,
+    fetchCalls: enhancedFetchCalls,
+    semanticKind,
+    runtime,
+    rendering,
+    hydration,
+  };
+
+  const violatedConstraints = attachConstraints(enrichedPayload);
+
+  return {
+    ...enrichedPayload,
+    violatedConstraints,
+  };
 }
 
 /**
@@ -217,12 +252,12 @@ export async function analyzeFile(
 export async function analyzeFiles(
   filePaths: string[],
   options: AnalyzeOptions = {},
-): Promise<FileAnalysis[]> {
+): Promise<SemanticFileAnalysis[]> {
   return Promise.all(
     filePaths.map((fp) =>
       analyzeFile(fp, options).catch(
-        (err: Error) =>
-          ({
+        (err: Error) => {
+          const raw: FileAnalysis = {
             filePath: fp,
             isClientComponent: false,
             isServerComponent: false,
@@ -237,7 +272,23 @@ export async function analyzeFiles(
             fetchCalls: [],
             hasAsyncComponent: false,
             errors: [err.message],
-          }) satisfies FileAnalysis,
+          };
+          
+          const semanticKind = detectSemanticKind(raw);
+          const runtime = detectRuntime(raw);
+          const rendering = detectRenderingMode(raw);
+          const hydration = detectHydration(raw);
+          
+          return {
+            ...raw,
+            fetchCalls: [],
+            semanticKind,
+            runtime,
+            rendering,
+            hydration,
+            violatedConstraints: [],
+          } satisfies SemanticFileAnalysis;
+        }
       ),
     ),
   );
