@@ -1,0 +1,171 @@
+import { readFileSync, readdirSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { createRequire } from "node:module";
+import {
+  KnowledgeConceptSchema,
+  type KnowledgeConcept,
+  type KnowledgeConstraint,
+} from "./schema.js";
+
+// ---------------------------------------------------------------------------
+// Resolve the path to packages/knowledge/concepts at runtime.
+//
+// tsup compiles to both ESM and CJS. In ESM, import.meta.url is available.
+// In CJS, __dirname is available natively. We resolve which to use at runtime.
+// createRequire gives us a require() in ESM; we use its .resolve() to get
+// the absolute path of this module, then derive __dirname from it.
+// ---------------------------------------------------------------------------
+
+// Build a module-local require anchored to this file.
+// createRequire(import.meta.url) works in ESM; in the CJS build tsup injects
+// a __filename global so we use that as the fallback via globalThis.
+//
+// Note: tsup's CJS shim already defines __filename in the module scope.
+// We reference it via `(globalThis as any).__filename` only as a safety net
+// — the `import.meta.url` branch runs in the ESM output.
+//
+// To avoid the "import.meta is not available" warning from tsup we use
+// createRequire with an absolute path derived from process.env or a
+// direct __dirname reference for CJS, and import.meta.url only where
+// we KNOW we are in ESM (the check is done at module evaluation time).
+
+// For path resolution we only need the directory of the compiled file.
+// In CJS __dirname is a module global injected by Node. In ESM we derive
+// it from import.meta.url. tsup handles both via __dirname injection in CJS.
+/* eslint-disable @typescript-eslint/no-var-requires */
+const _require = createRequire(
+  new URL("./schema.js", "file://" + __dirname + "/registry.js")
+);
+
+// Resolve the concepts directory relative to this compiled file:
+//   dist/knowledge/registry.{js|cjs}  →  up 3 levels  →  workspace root
+//   then navigate to packages/knowledge/concepts
+const REGISTRY_FILE = _require.resolve("./schema.js");
+// REGISTRY_FILE = /…/dist/knowledge/schema.js
+const DIST_DIR   = dirname(dirname(REGISTRY_FILE)); // /…/dist  (up to dist root)
+const PKG_DIR    = dirname(DIST_DIR);               // /…/packages/rules
+const PKGS_DIR   = dirname(PKG_DIR);                // /…/packages
+const CONCEPTS_DIR = join(PKGS_DIR, "knowledge", "concepts");
+
+// ---------------------------------------------------------------------------
+// KnowledgeRegistry
+//
+// Loads ALL knowledge packs eagerly at construction time (synchronously, once).
+// Rules query this registry during their run() to retrieve constraints and
+// patterns without any hardcoded semantics in the rule files themselves.
+// ---------------------------------------------------------------------------
+
+export class KnowledgeRegistry {
+  /** Map keyed by concept name (e.g. "Server Components", "Caching") */
+  private readonly concepts: Map<string, KnowledgeConcept> = new Map();
+
+  /** Map keyed by concept category slug (e.g. "server-components", "caching") */
+  private readonly conceptsByCategory: Map<string, KnowledgeConcept> = new Map();
+
+  constructor() {
+    this.loadAll();
+  }
+
+  // -------------------------------------------------------------------------
+  // Private: load all JSON files from the concepts directory
+  // -------------------------------------------------------------------------
+
+  private loadAll(): void {
+    let files: string[];
+
+    try {
+      files = readdirSync(CONCEPTS_DIR).filter((f) => f.endsWith(".json"));
+    } catch (err: any) {
+      console.error(
+        `[KnowledgeRegistry] Failed to read concepts directory at "${CONCEPTS_DIR}": ${err.message}`
+      );
+      return;
+    }
+
+    for (const file of files) {
+      const filePath = join(CONCEPTS_DIR, file);
+      try {
+        const raw = JSON.parse(readFileSync(filePath, "utf-8"));
+        const result = KnowledgeConceptSchema.safeParse(raw);
+
+        if (!result.success) {
+          console.warn(
+            `[KnowledgeRegistry] Schema validation failed for "${file}":\n`,
+            result.error.format()
+          );
+          continue;
+        }
+
+        const concept = result.data;
+        this.concepts.set(concept.concept, concept);
+        this.conceptsByCategory.set(concept.category, concept);
+      } catch (err: any) {
+        console.error(
+          `[KnowledgeRegistry] Failed to load "${file}": ${err.message}`
+        );
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Public API
+  // -------------------------------------------------------------------------
+
+  /**
+   * Retrieve a full knowledge concept by its human-readable concept name.
+   *
+   * @example getConcept("Server Components")
+   */
+  getConcept(conceptName: string): KnowledgeConcept | undefined {
+    return this.concepts.get(conceptName);
+  }
+
+  /**
+   * Retrieve a full knowledge concept by its category slug.
+   *
+   * @example getConceptByCategory("server-components")
+   */
+  getConceptByCategory(category: string): KnowledgeConcept | undefined {
+    return this.conceptsByCategory.get(category);
+  }
+
+  /**
+   * Retrieve a specific constraint from a concept by the constraint's title.
+   * Performs a case-insensitive substring match on the title so callers don't
+   * need to memorise the exact title string.
+   *
+   * @example getConstraint("Server Components", "No Browser APIs")
+   */
+  getConstraint(
+    conceptName: string,
+    titleSubstring: string
+  ): KnowledgeConstraint | undefined {
+    const concept = this.concepts.get(conceptName);
+    if (!concept) return undefined;
+
+    const lower = titleSubstring.toLowerCase();
+    return concept.constraints.find((c) =>
+      c.title.toLowerCase().includes(lower)
+    );
+  }
+
+  /**
+   * Retrieve a specific constraint by its stable ID (e.g. "SC-001").
+   *
+   * @example getConstraintById("SC-001")
+   */
+  getConstraintById(id: string): KnowledgeConstraint | undefined {
+    for (const concept of this.concepts.values()) {
+      const found = concept.constraints.find((c) => c.id === id);
+      if (found) return found;
+    }
+    return undefined;
+  }
+
+  /**
+   * List all loaded concept names. Useful for debugging and diagnostics.
+   */
+  listConcepts(): string[] {
+    return Array.from(this.concepts.keys());
+  }
+}
