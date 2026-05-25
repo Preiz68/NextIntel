@@ -32,7 +32,7 @@ export const requireGenerateStaticParams: Rule = {
 
     for (const analysis of context.analyses) {
       // We only care about page components that are Server Components
-      if (analysis.isClientComponent) continue;
+      if (analysis.executionModel.componentType !== "server") continue;
 
       const normalizedPath = analysis.filePath.replace(/\\/g, "/");
 
@@ -43,7 +43,7 @@ export const requireGenerateStaticParams: Rule = {
       if (!isPage || !isDynamicSegment) continue;
 
       // Check if generateStaticParams is exported
-      const hasGenerateStaticParams = analysis.exports.includes("generateStaticParams");
+      const hasGenerateStaticParams = analysis.executionModel.architectureFlags.includes("has-static-params");
       
       if (!hasGenerateStaticParams) {
         diagnostics.push({

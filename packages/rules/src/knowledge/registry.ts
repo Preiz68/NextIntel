@@ -1,5 +1,6 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import {
   KnowledgeConceptSchema,
@@ -27,6 +28,7 @@ import {
 // — the `import.meta.url` branch runs in the ESM output.
 //
 // To avoid the "import.meta is not available" warning from tsup we use
+
 // createRequire with an absolute path derived from process.env or a
 // direct __dirname reference for CJS, and import.meta.url only where
 // we KNOW we are in ESM (the check is done at module evaluation time).
@@ -35,19 +37,31 @@ import {
 // In CJS __dirname is a module global injected by Node. In ESM we derive
 // it from import.meta.url. tsup handles both via __dirname injection in CJS.
 /* eslint-disable @typescript-eslint/no-var-requires */
-const _require = createRequire(
-  new URL("./schema.js", "file://" + __dirname + "/registry.js")
-);
+const localDir =
+  typeof __dirname !== "undefined"
+    ? __dirname
+    : dirname(fileURLToPath(import.meta.url));
 
-// Resolve the concepts directory relative to this compiled file:
-//   dist/knowledge/registry.{js|cjs}  →  up 3 levels  →  workspace root
-//   then navigate to packages/knowledge/concepts
-const REGISTRY_FILE = _require.resolve("./schema.js");
-// REGISTRY_FILE = /…/dist/knowledge/schema.js
-const DIST_DIR   = dirname(dirname(REGISTRY_FILE)); // /…/dist  (up to dist root)
-const PKG_DIR    = dirname(DIST_DIR);               // /…/packages/rules
-const PKGS_DIR   = dirname(PKG_DIR);                // /…/packages
-const CONCEPTS_DIR = join(PKGS_DIR, "knowledge", "concepts");
+// Walk up parent directories to locate packages/knowledge/concepts
+let conceptsDir = "";
+let current = localDir;
+for (let i = 0; i < 6; i++) {
+  const candidate = join(current, "packages", "knowledge", "concepts");
+  if (existsSync(candidate)) {
+    conceptsDir = candidate;
+    break;
+  }
+  const candidateDirect = join(current, "knowledge", "concepts");
+  if (existsSync(candidateDirect)) {
+    conceptsDir = candidateDirect;
+    break;
+  }
+  const parent = dirname(current);
+  if (parent === current) break;
+  current = parent;
+}
+
+const CONCEPTS_DIR = conceptsDir;
 
 // ---------------------------------------------------------------------------
 // KnowledgeRegistry
@@ -62,7 +76,8 @@ export class KnowledgeRegistry {
   private readonly concepts: Map<string, KnowledgeConcept> = new Map();
 
   /** Map keyed by concept category slug (e.g. "server-components", "caching") */
-  private readonly conceptsByCategory: Map<string, KnowledgeConcept> = new Map();
+  private readonly conceptsByCategory: Map<string, KnowledgeConcept> =
+    new Map();
 
   constructor() {
     this.loadAll();
@@ -79,7 +94,7 @@ export class KnowledgeRegistry {
       files = readdirSync(CONCEPTS_DIR).filter((f) => f.endsWith(".json"));
     } catch (err: any) {
       console.error(
-        `[KnowledgeRegistry] Failed to read concepts directory at "${CONCEPTS_DIR}": ${err.message}`
+        `[KnowledgeRegistry] Failed to read concepts directory at "${CONCEPTS_DIR}": ${err.message}`,
       );
       return;
     }
@@ -93,7 +108,7 @@ export class KnowledgeRegistry {
         if (!result.success) {
           console.warn(
             `[KnowledgeRegistry] Schema validation failed for "${file}":\n`,
-            result.error.format()
+            result.error.format(),
           );
           continue;
         }
@@ -106,7 +121,7 @@ export class KnowledgeRegistry {
         this.conceptsByCategory.set(concept.category, concept);
       } catch (err: any) {
         console.error(
-          `[KnowledgeRegistry] Failed to load "${file}": ${err.message}`
+          `[KnowledgeRegistry] Failed to load "${file}": ${err.message}`,
         );
       }
     }
@@ -139,7 +154,7 @@ export class KnowledgeRegistry {
    */
   getConstraint(
     pack: string,
-    constraintId: string
+    constraintId: string,
   ): ConstraintDefinition | undefined {
     const concept = this.getConcept(pack);
     if (!concept) return undefined;
@@ -154,7 +169,10 @@ export class KnowledgeRegistry {
     if (!concept) return [];
     const patterns: string[] = [];
     for (const constraint of concept.constraints) {
-      const list = type === "forbidden" ? constraint.forbiddenPatterns : constraint.allowedPatterns;
+      const list =
+        type === "forbidden"
+          ? constraint.forbiddenPatterns
+          : constraint.allowedPatterns;
       patterns.push(...list);
     }
     return patterns;

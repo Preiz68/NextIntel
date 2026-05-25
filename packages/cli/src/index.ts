@@ -3,7 +3,7 @@ import pc from "picocolors";
 import { analyzeFiles } from "../../engine/src/analyzer/analyzeFile.js";
 import { scanProject } from "../../engine/src/scanner/scanProject.js";
 import { buildGraph } from "../../engine/src/graph/buildGraph.js";
-import { RuleEngine, rules } from "../../rules/src/index.js";
+import { RuleEngine, rules, renderGroupedDiagnostics } from "../../rules/src/index.js";
 import path from "node:path";
 
 const program = new Command();
@@ -80,21 +80,7 @@ program
             pc.green("✅ No issues found! Your project looks clean.\n"),
           );
         } else {
-          diagnostics.forEach((d) => {
-            const label =
-              d.severity === "error"
-                ? pc.red("ERROR")
-                : d.severity === "warning"
-                  ? pc.yellow("WARNING")
-                  : pc.blue("INFO");
-            console.log(`${label} ${pc.dim(d.ruleId)}`);
-            console.log(`${pc.bold(d.file)}${d.line ? `:${d.line}` : ""}`);
-            console.log(`  ${d.message}`);
-            if (d.fix) {
-              console.log(pc.green(`  💡 Suggestion: ${d.fix}`));
-            }
-            console.log();
-          });
+          console.log(renderGroupedDiagnostics(diagnostics));
 
           console.log(pc.bold("\n--- Summary ---"));
           console.log(`Files Analyzed: ${pc.cyan(fileCount)}`);

@@ -30,48 +30,37 @@ export const revalidationCacheLifetime: Rule = {
     const productionRisks = constraint?.productionRisks ?? [];
 
     for (const analysis of context.analyses) {
-      if (analysis.isClientComponent) continue;
+      if (analysis.executionModel.componentType === "client") continue;
 
       const normalizedPath = analysis.filePath.replace(/\\/g, "/");
       const isLayout = normalizedPath.endsWith("/layout.tsx") || normalizedPath.endsWith("/layout.jsx") || normalizedPath.endsWith("/layout.js");
 
       if (!isLayout) continue;
 
-      for (const fetchCall of analysis.fetchCalls) {
-        // Parse the revalidate value
-        let revalValue: number | null = null;
-        if (typeof fetchCall.revalidateValue === "number") {
-          revalValue = fetchCall.revalidateValue;
-        } else if (typeof fetchCall.revalidateValue === "string") {
-          const parsed = parseInt(fetchCall.revalidateValue, 10);
-          if (!isNaN(parsed)) {
-            revalValue = parsed;
-          }
-        }
+      const { revalidate } = analysis.executionModel.fetchStrategy;
 
-        if (revalValue !== null && revalValue < 60) {
-          diagnostics.push({
-            file: analysis.filePath,
-            line: fetchCall.line,
-            severity: constraint?.severity ?? "warning",
-            ruleId: this.id,
-            id: constraint?.id ?? "RV-002",
+      if (revalidate !== null && revalidate < 60) {
+        diagnostics.push({
+          file: analysis.filePath,
+          line: analysis.fetchCalls[0]?.line,
+          severity: constraint?.severity ?? "warning",
+          ruleId: this.id,
+          id: constraint?.id ?? "RV-002",
 
-            // ── Core message dynamically constructed from constraint ─────────
-            message: `Extremely low revalidation interval (${revalValue}s) detected in layout. ${constraint?.problem ?? ""}`,
+          // ── Core message dynamically constructed from constraint ─────────
+          message: `Extremely low revalidation interval (${revalidate}s) detected in layout. ${constraint?.problem ?? ""}`,
 
-            // ── Legacy fix (preserved for backward compat) ────────────────────
-            fix: quickFixes[0],
+          // ── Legacy fix (preserved for backward compat) ────────────────────
+          fix: quickFixes[0],
 
-            // ── Knowledge-enriched fields ─────────────────────────────────────
-            whyItMatters,
-            quickFixes,
-            architectureSuggestions,
-            optimizationGuidance,
-            productionRisks,
-            examples: constraint?.examples,
-          });
-        }
+          // ── Knowledge-enriched fields ─────────────────────────────────────
+          whyItMatters,
+          quickFixes,
+          architectureSuggestions,
+          optimizationGuidance,
+          productionRisks,
+          examples: constraint?.examples,
+        });
       }
     }
 

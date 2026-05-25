@@ -23,7 +23,11 @@ export function normalizePath(input: string, cwd = process.cwd()): string {
     : path.resolve(cwd, input);
 
   // Convert Windows separators → POSIX (no-op on Linux / macOS).
-  return absolute.split(path.sep).join("/");
+  let normalized = absolute.split(path.sep).join("/");
+  if (/^[a-zA-Z]:\//.test(normalized)) {
+    normalized = normalized.charAt(0).toUpperCase() + normalized.slice(1);
+  }
+  return normalized;
 }
 
 /**

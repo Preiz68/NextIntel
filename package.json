@@ -6,7 +6,7 @@
   "scripts": {
     "analyze": "next-intel analyze",
     "build": "pnpm -r build",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "pnpm --filter engine test"
   },
   "keywords": [],
   "author": "",
@@ -20,6 +20,8 @@
   },
   "type": "module",
   "devDependencies": {
+    "@types/graphlib": "^2.1.12",
+    "graphlib": "^2.1.8",
     "next-intel": "workspace:*",
     "tsx": "^4.21.0",
     "turbo": "^2.9.12",

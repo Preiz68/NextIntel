@@ -1,16 +1,17 @@
-import type { SemanticKind } from "./types.js";
+import type { SemanticKind, RuntimeType } from "./types.js";
 import type { FileAnalysis } from "../analyzer/types.js";
 import path from "node:path";
 
 /**
- * Derives the semantic role of the file based on Next.js conventions.
+ * Derives the semantic role of the file based on Next.js App Router conventions
+ * and AST findings (directives, imports, exports).
  */
 export function detectSemanticKind(analysis: FileAnalysis): SemanticKind {
   const ext = path.extname(analysis.filePath);
-  const basename = path.basename(analysis.filePath, ext); // e.g. "page", "layout"
+  const basename = path.basename(analysis.filePath, ext);
   const normalizedPath = analysis.filePath.replace(/\\/g, "/");
 
-  // App Router Special Files
+  // 1. App Router Route Conventions
   if (basename === "page") return "page";
   if (basename === "layout") return "layout";
   if (basename === "template") return "template";
@@ -19,35 +20,80 @@ export function detectSemanticKind(analysis: FileAnalysis): SemanticKind {
   if (basename === "not-found") return "not-found";
   if (basename === "global-error") return "global-error";
   if (basename === "default") return "default";
-  
-  // App Router API
+
+  // App Router API Routes
   if (basename === "route") return "route-handler";
-  
-  // Middleware
+
+  // Next.js Middleware
   if (basename === "middleware") return "middleware";
 
-  // Server Actions (heuristic: has 'use server' and is not a special Next.js component file)
-  if (analysis.isServerComponent) {
-    // If it's a utility file that exports actions (indicated by use server)
-    // Wait, in Next.js 'use server' at the top of a file makes all its exports Server Actions.
-    // However, analyzeFile marks `isServerComponent: true` for BOTH default RSCs (no directive)
-    // AND explicit 'use server' directives.
-    // Let's rely on standard RSC vs Client Component fallback.
-    // If we wanted to precisely identify pure Server Action files, we'd check if 'use server'
-    // was specifically parsed. For now, we fallback to component vs util.
+  // 2. Directives Checking
+  if (analysis.hasTopLevelUseServer) {
+    return "server-action";
   }
 
-  // Component heuristics
-  const hasReactImport = analysis.imports.some(imp => imp.includes("react"));
-  const hasComponentExport = analysis.exportDetails.some(
-    exp => exp.kind === "function" && /^[A-Z]/.test(exp.name)
-  );
+  // 3. Client Module (Explicit Directive)
+  if (analysis.isClientComponent) {
+    const hasReactImport = analysis.imports.some(imp => 
+      imp.includes("react") || 
+      imp.includes("next/link") || 
+      imp.includes("next/image")
+    );
+    const hasComponentExport = analysis.exportDetails.some(
+      exp => (exp.kind === "function" || exp.kind === "variable") && 
+             (exp.name === "default" || /^[A-Z]/.test(exp.name))
+    );
+    if (hasReactImport || hasComponentExport) {
+      return "client-component";
+    }
+    return "client-util";
+  }
 
-  if (hasReactImport || hasComponentExport) {
-    if (analysis.isClientComponent) return "client-component";
+  // 4. Shared Module (No runtime behavior: no server/browser taints)
+  const hasServerTaint = analysis.taints.some(t => t.type === "SERVER_ONLY" || t.type === "NODE_NATIVE_API" || t.type === "REQUEST_CONTEXT");
+  const hasBrowserTaint = analysis.taints.some(t => t.type === "BROWSER_ONLY");
+
+  if (!hasServerTaint && !hasBrowserTaint) {
+    return "shared-util";
+  }
+
+  if (hasBrowserTaint && !hasServerTaint) {
+    return "client-util";
+  }
+
+  // 5. Default to Server Module
+  const hasComponentExport = analysis.exportDetails.some(
+    exp => (exp.kind === "function" || exp.kind === "variable") && 
+           (exp.name === "default" || /^[A-Z]/.test(exp.name))
+  );
+  if (hasComponentExport) {
     return "server-component";
   }
+  return "server-util";
+}
 
-  // Default to utility if it doesn't look like a React component or special file
-  return "util";
+export function detectRuntimeType(semanticKind: SemanticKind): RuntimeType {
+  switch (semanticKind) {
+    case "server-action":
+      return "SERVER_ACTION";
+    case "route-handler":
+    case "middleware":
+      return "ROUTE_HANDLER";
+    case "client-component":
+    case "client-util":
+      return "CLIENT_COMPONENT";
+    case "server-component":
+    case "page":
+    case "layout":
+    case "template":
+    case "loading":
+    case "error":
+    case "not-found":
+    case "global-error":
+    case "default":
+    case "server-util":
+      return "SERVER_COMPONENT";
+    default:
+      return "SHARED_MODULE";
+  }
 }

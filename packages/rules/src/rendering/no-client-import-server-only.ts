@@ -1,13 +1,8 @@
 import { Rule, RuleContext, Diagnostic } from "../types.js";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { mapEventToDiagnostic } from "../knowledge/atomicConstraints.js";
 
-/**
- * Rule: no-client-import-server-only
- *
- * Detection logic: unchanged deterministic graph edge traversal.
- * Semantics: sourced from two complementary domains:
- *   • "Server Components" constraint SC-004 (Environment Variable Exposure / server boundary enforcement).
- *   • "Client Components" constraint CC-003 (Server Components Must Not Be Imported into Client Components).
- */
 export const noClientImportServerOnly: Rule = {
   id: "no-client-import-server-only",
 
@@ -20,61 +15,86 @@ export const noClientImportServerOnly: Rule = {
   run(context: RuleContext): Diagnostic[] {
     const diagnostics: Diagnostic[] = [];
 
-    // ── Fetch semantic knowledge from two complementary domains ─────────────
-    const scConstraint = context.knowledgeRegistry.getConstraint("server-components", "SC-004");
-    const ccConstraint = context.knowledgeRegistry.getConstraint("client-components", "CC-003");
+    for (const [nodePath, node] of context.nodes.entries()) {
+      const isClient = node?.isClientComponent || node?.semanticKind === "client-component";
+      if (!isClient) continue;
 
-    // Merge guidance from both domains — deduplicate by string content
-    const mergeUnique = (...arrays: (string[] | undefined)[]): string[] => {
-      const seen = new Set<string>();
-      const result: string[] = [];
-      for (const arr of arrays) {
-        for (const item of arr ?? []) {
-          if (!seen.has(item)) {
-            seen.add(item);
-            result.push(item);
+      // BFS to find reachable Server Components
+      const visited = new Set<string>([nodePath]);
+      const queue: string[] = [nodePath];
+      const parentMap = new Map<string, string>();
+      const targets: string[] = [];
+
+      while (queue.length > 0) {
+        const curr = queue.shift()!;
+        const successors = (context as any).graph?.successors(curr) || [];
+        for (const succ of successors) {
+          const succNode = context.nodes.get(succ);
+          const isServerAction =
+            succNode?.semanticKind === "server-action" ||
+            succNode?.isServerAction ||
+            succ.toLowerCase().includes("action");
+          if (isServerAction) continue;
+
+          if (!visited.has(succ)) {
+            visited.add(succ);
+            parentMap.set(succ, curr);
+
+            const isServer = succNode?.isServerComponent || succNode?.semanticKind === "server-component";
+            if (isServer) {
+              targets.push(succ);
+            } else {
+              queue.push(succ);
+            }
           }
         }
       }
-      return result;
-    };
 
-    const quickFixes = mergeUnique(ccConstraint?.quickFixes, scConstraint?.quickFixes);
-    const architectureSuggestions = mergeUnique(ccConstraint?.architectureSuggestions, scConstraint?.architectureSuggestions);
-    const optimizationGuidance = mergeUnique(ccConstraint?.optimizationGuidance, scConstraint?.optimizationGuidance);
-    const productionRisks = mergeUnique(ccConstraint?.productionRisks, scConstraint?.productionRisks);
+      for (const target of targets) {
+        // Trace back path to find the first hop
+        const pathNodes: string[] = [];
+        let curr: string | undefined = target;
+        while (curr) {
+          pathNodes.unshift(curr);
+          curr = parentMap.get(curr);
+        }
 
-    const whyItMatters = ccConstraint?.whyItMatters ?? scConstraint?.whyItMatters ?? "Server modules cannot be directly imported in Client Components.";
+        const nextHop = pathNodes[1] || target;
 
-    for (const edge of (context as any).edges || []) {
-      const fromNode = context.nodes.get(edge.from);
-      const toNode = context.nodes.get(edge.to);
+        // Resolve the line where this import statement starts
+        let line = 1;
+        try {
+          const content = readFileSync(nodePath, "utf-8");
+          const lines = content.split("\n");
+          const targetBase = path
+            .basename(nextHop, path.extname(nextHop))
+            .replace(/^temp-/, "");
+          for (let i = 0; i < lines.length; i++) {
+            if (lines[i]!.includes(targetBase)) {
+              // Scan backwards to find the start of the import statement
+              let importLine = i;
+              while (importLine >= 0 && !lines[importLine]!.includes("import")) {
+                importLine--;
+              }
+              line = (importLine >= 0 ? importLine : i) + 1;
+              break;
+            }
+          }
+        } catch {
+          // ignore
+        }
 
-      if (!fromNode?.isClientComponent || !toNode?.isServerComponent) continue;
-
-      // In Next.js, importing a 'use server' file in a 'use client' file
-      // is allowed for Server Actions, but rendering a Server Component inside
-      // a Client Component by direct import is NOT allowed.
-      diagnostics.push({
-        file: edge.from,
-        severity: ccConstraint?.severity ?? scConstraint?.severity ?? "error",
-        ruleId: this.id,
-        id: ccConstraint?.id ?? "CC-003",
-
-        // ── Core message dynamically constructed from constraint ─────────
-        message: `Client Component '${edge.from}' imports Server Component/Module '${edge.to}'. ${ccConstraint?.problem ?? ""}`,
-
-        // ── Legacy fix (preserved for backward compat) ─────────────────────
-        fix: quickFixes[0],
-
-        // ── Knowledge-enriched fields ───────────────────────────────────────
-        whyItMatters,
-        quickFixes,
-        architectureSuggestions,
-        optimizationGuidance,
-        productionRisks,
-        examples: ccConstraint?.examples,
-      });
+        diagnostics.push(
+          mapEventToDiagnostic(
+            "SERVER_IMPORT_IN_CLIENT_COMPONENT",
+            "CC-SERVER-IMPORT-001",
+            this.id,
+            nodePath,
+            line,
+            `Client Component '${nodePath}' imports Server Component/Module '${target}'.`
+          )
+        );
+      }
     }
 
     return diagnostics;

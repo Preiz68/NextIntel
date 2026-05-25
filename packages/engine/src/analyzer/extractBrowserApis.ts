@@ -1,6 +1,7 @@
 import { SourceFile, SyntaxKind, Node } from "ts-morph";
 import { BROWSER_GLOBALS } from "./constants.js";
 import type { BrowserAPIUsage } from "./types.js";
+import { doesValueAffectRender } from "./renderDivergence.js";
 
 /**
  * Checks if a node is nested inside a deferred execution context,
@@ -41,6 +42,54 @@ function isInsideDeferredScope(node: Node): boolean {
       }
     }
 
+    parent = parent.getParent();
+  }
+  return false;
+}
+
+function isNodeConditionallyGuarded(node: Node): boolean {
+  let parent = node.getParent();
+  while (parent) {
+    const kind = parent.getKind();
+    
+    if (kind === SyntaxKind.IfStatement) {
+      const ifStmt = parent.asKindOrThrow(SyntaxKind.IfStatement);
+      const condText = ifStmt.getExpression().getText();
+      if (
+        condText.includes("window") ||
+        condText.includes("document") ||
+        condText.includes("process.env") ||
+        condText.includes("globalThis")
+      ) {
+        return true;
+      }
+    } else if (kind === SyntaxKind.ConditionalExpression) {
+      const condExpr = parent.asKindOrThrow(SyntaxKind.ConditionalExpression);
+      const condText = condExpr.getCondition().getText();
+      if (
+        condText.includes("window") ||
+        condText.includes("document") ||
+        condText.includes("process.env") ||
+        condText.includes("globalThis")
+      ) {
+        return true;
+      }
+    } else if (kind === SyntaxKind.BinaryExpression) {
+      const binExpr = parent.asKindOrThrow(SyntaxKind.BinaryExpression);
+      const op = binExpr.getOperatorToken().getKind();
+      if (op === SyntaxKind.AmpersandAmpersandToken) {
+        const leftText = binExpr.getLeft().getText();
+        if (
+          leftText.includes("window") ||
+          leftText.includes("document") ||
+          leftText.includes("process.env") ||
+          leftText.includes("globalThis")
+        ) {
+          return true;
+        }
+      }
+    }
+    
     parent = parent.getParent();
   }
   return false;
@@ -131,11 +180,15 @@ export function extractBrowserAPIs(sourceFile: SourceFile): BrowserAPIUsage[] {
 
     // Get 1-based line number where the browser API identifier is used
     const line = id.getStartLineNumber();
+    const affectsRender = doesValueAffectRender(id);
+    const isGuarded = isNodeConditionallyGuarded(id);
 
     usages.push({
       api: name,
       count: 1,
       line,
+      affectsRender,
+      isGuarded,
     });
   });
 

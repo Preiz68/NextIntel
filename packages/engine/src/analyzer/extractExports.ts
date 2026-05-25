@@ -1,5 +1,6 @@
 import { SourceFile, SyntaxKind, ExportedDeclarations } from "ts-morph";
 import type { ExportInfo } from "./types.js";
+import { normalizePath } from "../scanner/normalizePath.js";
 
 function getKind(
   declarations: ReadonlyArray<ExportedDeclarations>,
@@ -47,11 +48,15 @@ export function extractExports(sourceFile: SourceFile): ExportInfo[] {
           ed.getNamedExports().some((ne) => ne.getName() === name),
       );
 
+    const firstDecl = declarations[0];
+    const declaredInFile = firstDecl ? normalizePath(firstDecl.getSourceFile().getFilePath()) : undefined;
+
     results.push({
       name,
       isDefault,
       isTypeOnly,
       kind: getKind(declarations),
+      declaredInFile
     });
   }
 

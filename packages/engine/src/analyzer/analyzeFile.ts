@@ -8,17 +8,24 @@ import { extractHooks } from "./extractHooks.js";
 import { extractFetchCalls } from "./extractFetch.js";
 import { extractBrowserAPIs } from "./extractBrowserApis.js";
 import type { FileAnalysis } from "./types.js";
+import { analyzeDirectTaints } from "../taint/taintEngine.js";
+import { ExecutionSimulator } from "../simulator/executionSimulator.js";
 import type { SemanticFileAnalysis } from "../classifier/types.js";
 import { 
   detectSemanticKind, 
+  detectRuntimeType,
   detectRuntime, 
   detectRenderingMode, 
-  detectHydration 
+  detectHydration,
+  classifyBoundaries
 } from "../classifier/index.js";
 import { 
   evaluateFetchSemantics, 
   attachConstraints 
 } from "../intelligence/index.js";
+import { buildExecutionModel } from "../preprocessor/buildExecutionModel.js";
+import { normalizePath } from "../scanner/normalizePath.js";
+
 
 // ─── Shared Project instance (reused across calls for performance) ────────────
 
@@ -45,23 +52,24 @@ function getProject(tsConfigPath?: string): Project {
 function detectDirective(sourceFile: SourceFile): {
   isClient: boolean;
   isServer: boolean;
+  hasTopLevelUseServer: boolean;
 } {
   // "use client" / "use server" must be the very first statement,
   // optionally preceded by comments.
   const statements = sourceFile.getStatements();
   const first = statements[0];
 
-  if (!first) return { isClient: false, isServer: false };
+  if (!first) return { isClient: false, isServer: false, hasTopLevelUseServer: false };
 
   const text = first.getText().trim().replace(/;$/, "");
   if (text === '"use client"' || text === "'use client'") {
-    return { isClient: true, isServer: false };
+    return { isClient: true, isServer: false, hasTopLevelUseServer: false };
   }
   if (text === '"use server"' || text === "'use server'") {
-    return { isClient: false, isServer: true };
+    return { isClient: false, isServer: true, hasTopLevelUseServer: true };
   }
 
-  return { isClient: false, isServer: true };
+  return { isClient: false, isServer: true, hasTopLevelUseServer: false };
 }
 
 // ─── Async component detection ────────────────────────────────────────────────
@@ -78,6 +86,20 @@ function detectAsyncComponent(sourceFile: SourceFile): boolean {
     }
   }
 
+  return false;
+}
+
+// ─── Edge runtime detection ──────────────────────────────────────────────────
+
+function detectEdgeRuntime(sourceFile: SourceFile): boolean {
+  const runtimeExport = sourceFile.getVariableDeclaration("runtime");
+  if (runtimeExport && runtimeExport.isExported()) {
+    const initializer = runtimeExport.getInitializer();
+    if (initializer) {
+      const valText = initializer.getText().replace(/['"]/g, "");
+      if (valText === "edge") return true;
+    }
+  }
   return false;
 }
 
@@ -120,6 +142,7 @@ export async function analyzeFile(
   filePath: string,
   options: AnalyzeOptions = {},
 ): Promise<SemanticFileAnalysis> {
+  filePath = normalizePath(filePath);
   const errors: string[] = [];
 
   if (!options.fileContent && !fs.existsSync(filePath)) {
@@ -171,7 +194,7 @@ export async function analyzeFile(
   let hookDetails = [] as Awaited<ReturnType<typeof extractHooks>>;
   let fetchCalls = [] as Awaited<ReturnType<typeof extractFetchCalls>>;
   let browserAPIs = [] as Awaited<ReturnType<typeof extractBrowserAPIs>>;
-  let directive = { isClient: false, isServer: false };
+  let directive = { isClient: false, isServer: false, hasTopLevelUseServer: false };
   let hasAsyncComponent = false;
 
   try {
@@ -210,12 +233,28 @@ export async function analyzeFile(
     errors.push(`async: ${e.message}`);
   }
 
-  // ── Assemble raw AST result ──────────────────────────────────────────────
+  let isEdgeRuntime = false;
+  try {
+    isEdgeRuntime = detectEdgeRuntime(sourceFile);
+  } catch (e: any) {
+    errors.push(`edgeRuntime: ${e.message}`);
+  }
+
+  const actionFindings = ExecutionSimulator.runASTActionChecks(sourceFile);
+
+  const directTaints = analyzeDirectTaints(sourceFile);
+  const initialTaintState: "CLEAN" | "TAINTED" | "CONDITIONALLY_TAINTED" = directTaints.some((t) => t.state === "TAINTED")
+    ? "TAINTED"
+    : directTaints.some((t) => t.state === "CONDITIONALLY_TAINTED")
+      ? "CONDITIONALLY_TAINTED"
+      : "CLEAN";
 
   const rawAnalysis: FileAnalysis = {
     filePath,
     isClientComponent: directive.isClient,
     isServerComponent: directive.isServer,
+    hasTopLevelUseServer: directive.hasTopLevelUseServer,
+    isEdgeRuntime,
     imports: importDetails.map((i) => i.moduleSpecifier),
     importDetails,
     exports: exportDetails.map((e) => e.name),
@@ -227,24 +266,35 @@ export async function analyzeFile(
     fetchCalls,
     hasAsyncComponent,
     errors,
+    taintState: initialTaintState,
+    taints: directTaints,
+    simulationFindings: actionFindings,
   };
 
   // ── Apply Semantic Classification & Intelligence ─────────────────────────
 
   const enhancedFetchCalls = evaluateFetchSemantics(rawAnalysis.fetchCalls, rawAnalysis.isClientComponent);
   const semanticKind = detectSemanticKind(rawAnalysis);
+  const runtimeType = detectRuntimeType(semanticKind);
   const runtime = detectRuntime(rawAnalysis);
   const rendering = detectRenderingMode(rawAnalysis);
   const hydration = detectHydration(rawAnalysis);
+  const boundaries = classifyBoundaries(rawAnalysis, semanticKind);
+
+  const executionModel = buildExecutionModel(rawAnalysis, sourceFile);
 
   const enrichedPayload: Omit<SemanticFileAnalysis, "violatedConstraints"> = {
     ...rawAnalysis,
     fetchCalls: enhancedFetchCalls,
     semanticKind,
     runtime,
+    runtimeType,
     rendering,
     hydration,
+    boundaries,
+    executionModel,
   };
+
 
   const violatedConstraints = attachConstraints(enrichedPayload);
 
@@ -271,6 +321,8 @@ export async function analyzeFiles(
             filePath: fp,
             isClientComponent: false,
             isServerComponent: false,
+            hasTopLevelUseServer: false,
+            isEdgeRuntime: false,
             imports: [],
             importDetails: [],
             exports: [],
@@ -282,22 +334,33 @@ export async function analyzeFiles(
             fetchCalls: [],
             hasAsyncComponent: false,
             errors: [err.message],
+            taintState: "CLEAN",
+            taints: [],
+            simulationFindings: [],
           };
           
           const semanticKind = detectSemanticKind(raw);
+          const runtimeType = detectRuntimeType(semanticKind);
           const runtime = detectRuntime(raw);
           const rendering = detectRenderingMode(raw);
           const hydration = detectHydration(raw);
+          const boundaries = classifyBoundaries(raw, semanticKind);
+          
+          const executionModel = buildExecutionModel(raw);
           
           return {
             ...raw,
             fetchCalls: [],
             semanticKind,
             runtime,
+            runtimeType,
             rendering,
             hydration,
+            boundaries,
+            executionModel,
             violatedConstraints: [],
           } satisfies SemanticFileAnalysis;
+
         }
       ),
     ),

@@ -3,8 +3,11 @@ import path from "node:path";
 import fs from "node:fs";
 
 import type { SemanticFileAnalysis } from "../classifier/types.js";
+import { detectRuntimeType } from "../classifier/index.js";
 import type { GraphEdge, GraphNode } from "./types.js";
 import { EXTERNAL_MODULE_PREFIXES, KIND_PATTERNS } from "./constants.js";
+
+import { normalizePath } from "../scanner/normalizePath.js";
 
 // ─── Node classification ──────────────────────────────────────────────────────
 
@@ -69,9 +72,9 @@ function resolveSpecifier(
   ];
 
   for (const candidate of candidates) {
-    const normalized = candidate.split(path.sep).join("/");
+    const normalized = normalizePath(candidate);
     if (knownFiles.has(normalized)) return normalized;
-    if (fs.existsSync(candidate)) return candidate.split(path.sep).join("/");
+    if (fs.existsSync(candidate)) return normalizePath(candidate);
   }
 
   return null;
@@ -110,6 +113,7 @@ export function buildGraph(
       kind: analysis.semanticKind as any, // preserved for backwards compatibility
       semanticKind: analysis.semanticKind,
       runtime: analysis.runtime,
+      runtimeType: analysis.runtimeType,
       renderingMode: analysis.rendering.mode,
       isHydrationBoundary: analysis.hydration.isHydrationBoundary,
     };
@@ -130,34 +134,75 @@ export function buildGraph(
 
       if (!resolved) continue;
 
-      if (!graph.hasNode(resolved)) {
-        const node: GraphNode = {
-          id: resolved,
-          filePath: resolved,
-          isClientComponent: false,
-          isServerComponent: inferIsServerComponent(resolved, false),
-          hasDefaultExport: false,
-          kind: classifyKind(resolved),
-          semanticKind: classifyKind(resolved) as any,
-          runtime: "server",
-          renderingMode: "static",
-          isHydrationBoundary: false,
-        };
-        nodes.set(resolved, node);
-        graph.setNode(resolved, node);
+      const targets = new Set<string>();
+      const resolvedAnalysis = analyses.find((a) => a.filePath === resolved);
+
+      if (resolvedAnalysis) {
+        for (const name of importDetail.namedImports) {
+          const exp = resolvedAnalysis.exportDetails.find((e) => e.name === name);
+          if (exp && exp.declaredInFile && exp.declaredInFile !== resolved) {
+            targets.add(exp.declaredInFile);
+          }
+          targets.add(resolved);
+        }
+        if (importDetail.defaultImport) {
+          const exp = resolvedAnalysis.exportDetails.find((e) => e.name === "default");
+          if (exp && exp.declaredInFile && exp.declaredInFile !== resolved) {
+            targets.add(exp.declaredInFile);
+          }
+          targets.add(resolved);
+        }
+        if (importDetail.namespaceImport) {
+          targets.add(resolved);
+          for (const exp of resolvedAnalysis.exportDetails) {
+            if (exp.declaredInFile && exp.declaredInFile !== resolved) {
+              targets.add(exp.declaredInFile);
+            }
+          }
+        }
+        if (
+          importDetail.namedImports.length === 0 &&
+          !importDetail.defaultImport &&
+          !importDetail.namespaceImport
+        ) {
+          targets.add(resolved);
+        }
+      } else {
+        targets.add(resolved);
       }
 
-      graph.setEdge(analysis.filePath, resolved);
+      for (const target of targets) {
+        if (!graph.hasNode(target)) {
+          const targetKind = classifyKind(target);
+          const node: GraphNode = {
+            id: target,
+            filePath: target,
+            isClientComponent: false,
+            isServerComponent: inferIsServerComponent(target, false),
+            hasDefaultExport: false,
+            kind: targetKind,
+            semanticKind: targetKind as any,
+            runtime: "server",
+            runtimeType: detectRuntimeType(targetKind as any),
+            renderingMode: "static",
+            isHydrationBoundary: false,
+          };
+          nodes.set(target, node);
+          graph.setNode(target, node);
+        }
 
-      edges.push({
-        from: analysis.filePath,
-        to: resolved,
-        importedNames: [
-          ...importDetail.namedImports,
-          ...(importDetail.defaultImport ? [importDetail.defaultImport] : []),
-        ],
-        isTypeOnly: importDetail.isTypeOnly,
-      });
+        graph.setEdge(analysis.filePath, target);
+
+        edges.push({
+          from: analysis.filePath,
+          to: target,
+          importedNames: [
+            ...importDetail.namedImports,
+            ...(importDetail.defaultImport ? [importDetail.defaultImport] : []),
+          ],
+          isTypeOnly: importDetail.isTypeOnly,
+        });
+      }
     }
   }
 

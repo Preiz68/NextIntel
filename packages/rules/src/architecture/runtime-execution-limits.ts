@@ -45,32 +45,39 @@ export const runtimeExecutionLimits: Rule = {
     const productionRisks = constraint?.productionRisks ?? [];
 
     for (const analysis of context.analyses) {
-      if (analysis.runtime !== "edge") continue;
+      const isEdge = analysis.runtime === "edge" || analysis.isEdgeRuntime || analysis.executionModel.runtime === "edge";
+      if (!isEdge) continue;
 
-      for (const impInfo of analysis.importDetails) {
-        const specifier = impInfo.moduleSpecifier;
-        const cleanSpecifier = specifier.replace(/^node:/, "");
-
-        if (NATIVE_NODE_MODULES.has(cleanSpecifier)) {
+      for (const t of analysis.taints) {
+        if (t.type === "NODE_NATIVE_API" || t.source === "fs" || t.source === "path" || t.source === "net" || t.source === "crypto") {
           diagnostics.push({
             file: analysis.filePath,
-            severity: constraint?.severity ?? "error",
+            severity: "error", // Maps to CRITICAL with RU-001-CRITICAL profile
             ruleId: this.id,
-            id: constraint?.id ?? "RU-001",
-
-            // ── Core message dynamically constructed from constraint ─────────
-            message: `Native Node.js module '${specifier}' imported in Edge Runtime context. ${constraint?.problem ?? ""}`,
-
-            // ── Legacy fix (preserved for backward compat) ────────────────────
-            fix: quickFixes[0],
-
-            // ── Knowledge-enriched fields ─────────────────────────────────────
+            id: "RU-001-CRITICAL",
+            message: `CRITICAL: Native Node.js module/API '${t.source}' is used in an Edge Runtime context.`,
             whyItMatters,
             quickFixes,
             architectureSuggestions,
             optimizationGuidance,
             productionRisks,
             examples: constraint?.examples,
+            fix: "Change export const runtime = 'edge' to 'nodejs' or remove native Node imports."
+          });
+        } else if (t.type === "PROCESS_ENV") {
+          diagnostics.push({
+            file: analysis.filePath,
+            severity: "warning", // Maps to HIGH with RU-001-HIGH profile
+            ruleId: this.id,
+            id: "RU-001-HIGH",
+            message: `HIGH: Restricted process.env API '${t.source}' is referenced in an Edge Runtime context.`,
+            whyItMatters,
+            quickFixes: ["Avoid accessing process.env dynamically at runtime; use build-time environment definitions or next.config.js env mapping."],
+            architectureSuggestions: ["Limit environment variable usage on Edge. Prefer passing configurations explicitly or using public prefixes where safe."],
+            optimizationGuidance,
+            productionRisks: ["Dynamic process.env checks can bypass caching, raise boot times, or result in undefined runtime values in some Edge providers."],
+            examples: constraint?.examples,
+            fix: "Use environment configurations or build-time definitions instead of dynamic process.env access."
           });
         }
       }

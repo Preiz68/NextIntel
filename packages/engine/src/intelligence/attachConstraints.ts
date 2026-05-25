@@ -4,9 +4,8 @@ import type { SemanticFileAnalysis } from "../classifier/types.js";
  * Knowledge Integration Boundary
  *
  * This function evaluates the semantic metadata of a file and attaches the IDs
- * of violated constraints. It DOES NOT generate the human-readable diagnostic text
- * or quick fixes — that is the responsibility of the downstream Rules layer
- * querying the central Knowledge Registry.
+ * of violated constraints. It maps framework classifications and boundaries
+ * to central Knowledge Pack constraint rules.
  */
 export function attachConstraints(analysis: Omit<SemanticFileAnalysis, "violatedConstraints">): string[] {
   const violatedConstraints: string[] = [];
@@ -16,18 +15,34 @@ export function attachConstraints(analysis: Omit<SemanticFileAnalysis, "violated
   // -------------------------------------------------------------------------
   
   if (analysis.semanticKind === "server-component" || analysis.semanticKind === "page" || analysis.semanticKind === "layout") {
-    if (analysis.runtime !== "client") { // Extra guard
-      // SC-001: No Browser APIs
-      if (analysis.hydration.hydrationRisks.length > 0 || analysis.browserAPIs.length > 0) {
-        violatedConstraints.push("SC-001");
-      }
-      
-      // SC-002: No React Hooks (that are not useId/use)
-      if (analysis.hookDetails.length > 0) {
-        // Technically, `useId` and `use` are allowed, but we leave the strict 
-        // filtering to the specific rules layer or assume generic hooks are a violation.
-        violatedConstraints.push("SC-002");
-      }
+    // SC-001: No Browser APIs inside Server Components
+    if (analysis.browserAPIs && analysis.browserAPIs.length > 0) {
+      violatedConstraints.push("SC-001");
+    }
+    
+    // SC-002: No React Hooks inside Server Components
+    if (analysis.hookDetails && analysis.hookDetails.length > 0) {
+      violatedConstraints.push("SC-002");
+    }
+
+    if (analysis.boundaries.hasClientHooksInServer) {
+      violatedConstraints.push("SC-002");
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Client Components (CC-*)
+  // -------------------------------------------------------------------------
+
+  if (analysis.semanticKind === "client-component") {
+    // CC-001: 'use client' boundary pulls server-only modules
+    if (analysis.boundaries.hasServerOnlyApisInClient || analysis.boundaries.overHydrationRisk) {
+      violatedConstraints.push("CC-001");
+    }
+
+    // CC-003: Async Client Component is invalid
+    if (analysis.boundaries.hasAsyncClientComponent) {
+      violatedConstraints.push("CC-003");
     }
   }
 
@@ -47,13 +62,17 @@ export function attachConstraints(analysis: Omit<SemanticFileAnalysis, "violated
   // Hydration (HY-*)
   // -------------------------------------------------------------------------
   
-  // HY-001: Browser APIs in top-level render of Client Components
+  // HY-001: Non-deterministic render expressions or unguarded browser APIs
+  if (analysis.hydration.riskLevel === "high") {
+    violatedConstraints.push("HY-001");
+  }
+
   if (analysis.hydration.isHydrationBoundary && !analysis.hydration.hasRenderSafeBrowserApis) {
     violatedConstraints.push("HY-001");
   }
 
   // -------------------------------------------------------------------------
-  // Data Fetching & Performance (DF-*, PF-*, CA-*)
+  // Data Fetching & Caching (DF-*, PF-*, CA-*)
   // -------------------------------------------------------------------------
 
   if (analysis.runtime !== "client") {
@@ -65,9 +84,10 @@ export function attachConstraints(analysis: Omit<SemanticFileAnalysis, "violated
     }
   }
 
-  // Note: CC-003 and SC-004 (Client imports Server) are graph-level constraints,
-  // so they are not evaluated on a per-file basis here. They belong in graph validation.
+  // CA-005 / Caching conflict: Conflicting revalidate/dynamic configs
+  if (analysis.rendering.mode === "conflicting-cache-intent" || analysis.rendering.hasConflictingDeclarations) {
+    violatedConstraints.push("CA-005");
+  }
 
-  // Deduplicate just in case
   return Array.from(new Set(violatedConstraints));
 }

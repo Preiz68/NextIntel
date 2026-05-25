@@ -28,15 +28,14 @@ export const streamingSuspenseBoundaries: Rule = {
     const productionRisks = constraint?.productionRisks ?? [];
 
     for (const analysis of context.analyses) {
-      if (analysis.isClientComponent) continue;
+      if (analysis.executionModel.componentType === "client") continue;
 
       const normalizedPath = analysis.filePath.replace(/\\/g, "/");
       const isLayout = normalizedPath.endsWith("/layout.tsx") || normalizedPath.endsWith("/layout.jsx") || normalizedPath.endsWith("/layout.js");
 
       if (!isLayout) continue;
 
-      const dynamicTriggers = analysis.rendering.triggers || [];
-      const hasBlockingTrigger = dynamicTriggers.includes("cookies") || dynamicTriggers.includes("headers");
+      const hasBlockingTrigger = analysis.executionModel.usesServerApis.some(api => api.includes("cookies") || api.includes("headers"));
 
       if (hasBlockingTrigger) {
         diagnostics.push({

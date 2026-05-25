@@ -20,6 +20,7 @@ export interface ExportInfo {
     | "interface"
     | "enum"
     | "unknown";
+  declaredInFile?: string;
 }
 
 export interface FetchCall {
@@ -42,12 +43,16 @@ export interface BrowserAPIUsage {
   api: string;
   count: number;
   line: number;
+  affectsRender?: boolean;
+  isGuarded?: boolean;
 }
 
 export interface FileAnalysis {
   filePath: string;
   isClientComponent: boolean;
   isServerComponent: boolean;
+  hasTopLevelUseServer: boolean;
+  isEdgeRuntime: boolean;
   imports: string[];
   importDetails: ImportInfo[];
   exports: string[];
@@ -59,4 +64,7 @@ export interface FileAnalysis {
   fetchCalls: FetchCall[];
   hasAsyncComponent: boolean;
   errors: string[];
+  taintState: "CLEAN" | "TAINTED" | "CONDITIONALLY_TAINTED";
+  taints: any[];
+  simulationFindings: any[];
 }

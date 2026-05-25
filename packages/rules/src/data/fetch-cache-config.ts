@@ -32,14 +32,13 @@ export const fetchCacheConfig: Rule = {
     for (const analysis of context.analyses) {
       // Data caching only applies to Server Components, Route Handlers, and
       // Server Actions — not Client Components.
-      if (analysis.isClientComponent) continue;
+      if (analysis.executionModel.componentType === "client") continue;
 
-      for (const fetchCall of analysis.fetchCalls) {
-        if (fetchCall.cacheStrategy !== "implicit-dynamic") continue;
-
+      const { fetchStrategy } = analysis.executionModel;
+      if (fetchStrategy.hasFetch && fetchStrategy.cacheMode === null && fetchStrategy.revalidate === null) {
         diagnostics.push({
           file: analysis.filePath,
-          line: fetchCall.line,
+          line: analysis.fetchCalls[0]?.line,
           severity: constraint?.severity ?? "warning",
           ruleId: this.id,
           id: constraint?.id ?? "CA-001",

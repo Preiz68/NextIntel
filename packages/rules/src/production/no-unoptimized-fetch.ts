@@ -67,14 +67,13 @@ export const noUnoptimizedFetch: Rule = {
     for (const analysis of context.analyses) {
       // Only applies to Server Components — client-side fetching is handled
       // separately by the data-fetching rule domain.
-      if (analysis.isClientComponent) continue;
+      if (analysis.executionModel.componentType === "client") continue;
 
-      for (const f of analysis.fetchCalls) {
-        if (f.cacheStrategy !== "implicit-dynamic") continue;
-
+      const { fetchStrategy } = analysis.executionModel;
+      if (fetchStrategy.hasFetch && fetchStrategy.cacheMode === null && fetchStrategy.revalidate === null) {
         diagnostics.push({
           file: analysis.filePath,
-          line: f.line,
+          line: analysis.fetchCalls[0]?.line,
           severity: "warning",
           ruleId: this.id,
           id: dataConstraint?.id ?? "DF-001",

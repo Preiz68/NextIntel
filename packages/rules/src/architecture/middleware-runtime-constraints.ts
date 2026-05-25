@@ -28,8 +28,7 @@ export const middlewareRuntimeConstraints: Rule = {
     const productionRisks = constraint?.productionRisks ?? [];
 
     for (const analysis of context.analyses) {
-      const normalizedPath = analysis.filePath.replace(/\\/g, "/");
-      const isMiddleware = analysis.semanticKind === "middleware" || normalizedPath.endsWith("/middleware.ts") || normalizedPath.endsWith("/middleware.js");
+      const isMiddleware = analysis.executionModel.architectureFlags.includes("middleware");
 
       if (!isMiddleware) continue;
 

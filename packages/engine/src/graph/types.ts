@@ -1,4 +1,4 @@
-import type { SemanticKind, RuntimeContext, RenderingSemantics } from "../classifier/types.js";
+import type { SemanticKind, RuntimeContext, RenderingSemantics, RuntimeType } from "../classifier/types.js";
 
 export interface GraphNode {
   id: string;
@@ -10,6 +10,7 @@ export interface GraphNode {
   // Semantic framework properties
   semanticKind: SemanticKind;
   runtime: RuntimeContext;
+  runtimeType: RuntimeType;
   renderingMode: RenderingSemantics["mode"];
   isHydrationBoundary: boolean;
   
