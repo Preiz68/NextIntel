@@ -51,7 +51,7 @@ function getRuleBehavior(ruleId: string | number | undefined) {
 }
 
 // ─────────────────────────────────────────────
-// GLOBAL SINGLETON STATE
+// GLOBAL STATE
 // ─────────────────────────────────────────────
 
 let ruleEngine: any;
@@ -62,6 +62,8 @@ let isReady = false;
 const documentDiagnostics = new Map<string, RuleDiagnostic[]>();
 const debounceTimers = new Map<string, NodeJS.Timeout>();
 const cancelTokens = new Map<string, vscode.CancellationTokenSource>();
+
+let diagnostics: vscode.DiagnosticCollection;
 
 // ─────────────────────────────────────────────
 // LAZY ENGINE INIT
@@ -93,17 +95,20 @@ async function getAnalyzer() {
 export function activate(context: vscode.ExtensionContext) {
   console.log("NextIntel activated (light mode)");
 
-  const diagnostics = vscode.languages.createDiagnosticCollection("nextintel");
+  diagnostics = vscode.languages.createDiagnosticCollection("nextintel");
+  context.subscriptions.push(diagnostics);
 
   const output = vscode.window.createOutputChannel("NextIntel");
   output.appendLine("🚀 NextIntel running in production mode");
 
-  // ─────────────────────────────────────────────
-  // READY GATE (prevents startup event storms)
-  // ─────────────────────────────────────────────
-
+  // READY GATE
   const readyTimer = setTimeout(() => {
     isReady = true;
+
+    // 🔥 run initial analysis immediately
+    if (vscode.window.activeTextEditor) {
+      schedule(vscode.window.activeTextEditor.document);
+    }
   }, 1000);
 
   context.subscriptions.push({
@@ -158,7 +163,7 @@ export function activate(context: vscode.ExtensionContext) {
 
       if (tokenSource.token.isCancellationRequested) return;
 
-      const results = ruleEngine.run({
+      const results: RuleDiagnostic[] = ruleEngine.run({
         analyses: [analysis],
         graph: null,
         nodes: new Map(),
@@ -168,42 +173,63 @@ export function activate(context: vscode.ExtensionContext) {
       documentDiagnostics.set(key, results);
 
       const vscodeDiags = results.map((d: RuleDiagnostic) => {
-        const line = Math.max(0, (d.line ?? 1) - 1);
-        const safeLine = Math.min(line, document.lineCount - 1);
+        const rawLine = (d.line ?? 1) - 1;
+        const safeLine = Math.max(0, Math.min(rawLine, document.lineCount - 1));
 
-        const text = document.lineAt(safeLine).text;
+        const lineText = document.lineAt(safeLine)?.text ?? "";
 
-        const range = new vscode.Range(safeLine, 0, safeLine, text.length);
+        const startColumn =
+          typeof (d as any).column === "number"
+            ? Math.max(0, (d as any).column)
+            : 0;
 
-        const severity =
-          d.severity === "error"
-            ? vscode.DiagnosticSeverity.Error
-            : d.severity === "info"
-              ? vscode.DiagnosticSeverity.Information
-              : vscode.DiagnosticSeverity.Warning;
+        const endColumn =
+          typeof (d as any).endColumn === "number"
+            ? Math.max(startColumn + 1, (d as any).endColumn)
+            : Math.min(startColumn + 1, lineText.length || 1);
+
+        const safeEndColumn = Math.min(endColumn, lineText.length || 1);
+
+        const range =
+          lineText.length > 0
+            ? new vscode.Range(safeLine, startColumn, safeLine, safeEndColumn)
+            : new vscode.Range(safeLine, 0, safeLine, 1);
+
+        let severity = vscode.DiagnosticSeverity.Warning;
+
+        switch (String(d.severity).toLowerCase()) {
+          case "error":
+            severity = vscode.DiagnosticSeverity.Error;
+            break;
+          case "info":
+          case "information":
+            severity = vscode.DiagnosticSeverity.Information;
+            break;
+          case "hint":
+            severity = vscode.DiagnosticSeverity.Hint;
+            break;
+        }
 
         const diag = new vscode.Diagnostic(range, d.message, severity);
 
         diag.code = d.ruleId;
         diag.source = "NextIntel";
 
-        if (isRscRule(d.ruleId)) {
-          diag.tags = [vscode.DiagnosticTag.Unnecessary];
-        }
-
         return diag;
       });
 
+      // 🔥 ALWAYS set diagnostics (never skip)
       diagnostics.set(document.uri, vscodeDiags);
     } catch (err) {
       output.appendLine(`❌ Analysis failed: ${String(err)}`);
+      console.error(err);
     } finally {
       cancelTokens.delete(key);
     }
   }
 
   // ─────────────────────────────────────────────
-  // EVENT REGISTRATION
+  // EVENTS
   // ─────────────────────────────────────────────
 
   context.subscriptions.push(
@@ -227,15 +253,14 @@ export function activate(context: vscode.ExtensionContext) {
       const token = cancelTokens.get(key);
       if (token) token.cancel();
     }),
-  );
 
-  // cleanup on deactivate
-  context.subscriptions.push({
-    dispose: () => {
-      rulesLoaded = false;
-      isReady = false;
+    {
+      dispose: () => {
+        rulesLoaded = false;
+        isReady = false;
+      },
     },
-  });
+  );
 }
 
 export function deactivate() {}
