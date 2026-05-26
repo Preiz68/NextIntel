@@ -2,7 +2,7 @@
   "name": "next-intel",
   "displayName": "Next Intel",
   "description": "NextIntel is a high-performance static analysis extension specifically architected for the Next.js App Router. It scans your codebase in real-time to ensure your application follows best practices for architecture, performance, and the React Server Components (RSC) paradigm.",
-  "version": "2.0.1",
+  "version": "2.0.5",
   "engines": {
     "vscode": "^1.120.0"
   },
@@ -62,15 +62,15 @@
     "rules": "workspace:*"
   },
   "devDependencies": {
-    "@types/vscode": "^1.120.0",
     "@types/mocha": "^10.0.10",
-    "@types/node": "22.x",
-    "typescript-eslint": "^8.56.1",
-    "eslint": "^9.39.3",
-    "esbuild": "^0.27.3",
-    "npm-run-all": "^4.1.5",
-    "typescript": "^5.9.3",
+    "@types/node": "~25.9.1",
+    "@types/vscode": "^1.120.0",
     "@vscode/test-cli": "^0.0.12",
-    "@vscode/test-electron": "^2.5.2"
+    "@vscode/test-electron": "^2.5.2",
+    "esbuild": "^0.28.0",
+    "eslint": "^10.4.0",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.59.4"
   }
 }

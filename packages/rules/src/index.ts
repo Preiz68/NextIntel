@@ -30,6 +30,9 @@ import { wrapThirdPartyComponents } from "./rendering/wrap-third-party-component
 import { noRouteHandlersInClientComponents } from "./rendering/no-route-handlers-in-client-components.js";
 import { noAsyncClientComponents } from "./rendering/no-async-client-components.js";
 import { noServerApiInClientComponents } from "./rendering/no-server-api-in-client-components.js";
+import { noDynamicApisInStaticRoutes } from "./rendering/no-dynamic-apis-in-static-routes.js";
+import { noUseCacheInClientComponents } from "./rendering/no-use-cache-in-client-components.js";
+import { noInlineServerActionsInClientComponents } from "./rendering/no-inline-server-actions-in-client-components.js";
 
 // ── Data Layer Rules ─────────────────────────────────────────────────────────
 import { fetchCacheConfig } from "./data/fetch-cache-config.js";
@@ -46,6 +49,8 @@ import { serverActionsNoReads } from "./architecture/server-actions-no-reads.js"
 import { serverActionsValidation } from "./architecture/server-actions-validation.js";
 import { serverActionsVsHandlers } from "./architecture/server-actions-vs-handlers.js";
 import { serverActionsBrowserApi } from "./architecture/server-actions-browser-api.js";
+import { noMixedBarrelFiles } from "./architecture/no-mixed-barrel-files.js";
+import { serverActionsLexicalClosures } from "./architecture/server-actions-lexical-closures.js";
 
 // ── Production Layer Rules ───────────────────────────────────────────────────
 import { noUnoptimizedFetch } from "./production/no-unoptimized-fetch.js";
@@ -68,6 +73,9 @@ export const rules = [
   noRouteHandlersInClientComponents,
   noAsyncClientComponents,
   noServerApiInClientComponents,
+  noDynamicApisInStaticRoutes,
+  noUseCacheInClientComponents,
+  noInlineServerActionsInClientComponents,
 
   // Data Layer
   fetchCacheConfig,
@@ -84,6 +92,8 @@ export const rules = [
   serverActionsValidation,
   serverActionsVsHandlers,
   serverActionsBrowserApi,
+  noMixedBarrelFiles,
+  serverActionsLexicalClosures,
 
   // Production Layer
   noUnoptimizedFetch,

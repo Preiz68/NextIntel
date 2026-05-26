@@ -23,8 +23,8 @@
     "@types/graphlib": "^2.1.12",
     "graphlib": "^2.1.8",
     "next-intel": "workspace:*",
-    "tsx": "^4.21.0",
-    "turbo": "^2.9.12",
+    "tsx": "^4.22.3",
+    "turbo": "^2.9.14",
     "typescript": "^6.0.3"
   },
   "dependencies": {

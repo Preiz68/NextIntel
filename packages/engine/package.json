@@ -22,9 +22,9 @@
   },
   "devDependencies": {
     "@types/graphlib": "^2.1.12",
-    "@types/node": "^25.7.0",
+    "@types/node": "^25.9.1",
     "tsup": "^8.5.1",
-    "tsx": "^4.21.0",
+    "tsx": "^4.22.3",
     "typescript": "^6.0.3"
   }
 }
