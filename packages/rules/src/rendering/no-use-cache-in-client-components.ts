@@ -20,7 +20,7 @@ export const noUseCacheInClientComponents: Rule = {
   run(context: RuleContext): Diagnostic[] {
     const diagnostics: Diagnostic[] = [];
 
-    const constraint = context.knowledgeRegistry.getConstraint("caching", "CA-005");
+    const constraint = context.knowledgeRegistry.getConstraint("caching", "RSC_API_VIOLATION-005");
     const whyItMatters = constraint?.whyItMatters ?? "Next.js 15 'use cache' directive is only valid in Server Components. Using it in Client Components will throw a compiler error.";
     const quickFixes = constraint?.quickFixes ?? ["Remove the 'use cache' directive from the Client Component or move the cached function to a Server Component."];
     const architectureSuggestions = constraint?.architectureSuggestions ?? [];
@@ -59,7 +59,7 @@ export const noUseCacheInClientComponents: Rule = {
         line,
         severity: "error",
         ruleId: this.id,
-        id: constraint?.id ?? "CA-005",
+        id: constraint?.id ?? "RSC_API_VIOLATION-005",
         message: "The 'use cache' directive is used inside a Client Component. 'use cache' is a server-only directive and cannot run in the browser.",
         fix: quickFixes[0],
         whyItMatters,

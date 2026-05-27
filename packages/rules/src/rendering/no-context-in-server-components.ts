@@ -14,8 +14,8 @@ export const noContextInServerComponents: Rule = {
     const diagnostics: Diagnostic[] = [];
 
     for (const analysis of context.analyses) {
-      const isServerCtx = analysis.executionModel.componentType === "server";
-      if (!isServerCtx) continue;
+      const isServer = !analysis.isClientComponent && analysis.executionModel.componentType !== "client";
+      if (!isServer) continue;
 
       const hasContextHook =
         analysis.executionModel.usesClientHooks.includes("createContext") ||

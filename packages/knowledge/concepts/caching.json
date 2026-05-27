@@ -5,7 +5,7 @@
 
   "constraints": [
     {
-      "id": "CA-001",
+      "id": "DYNAMIC_RENDER_TRIGGER-001",
       "title": "fetch() Requests Are Not Cached by Default in Modern Next.js",
       "problem": "In the current Next.js model, fetch() requests are not cached by default. Developers who assume all fetch calls are cached (from older documentation) will serve uncached, fresh data on every request, eliminating the performance benefits of static prerendering.",
       "whyItMatters": "Without explicit caching, every incoming request triggers a fresh fetch to the upstream data source. At scale, this means O(requests * data_sources) upstream calls, increasing latency, cost, and the risk of rate-limiting by external APIs. Prerendering opportunities are lost when data is not cacheable.",
@@ -59,7 +59,7 @@
       }
     },
     {
-      "id": "CA-002",
+      "id": "RSC_API_VIOLATION-002",
       "title": "Revalidation Must Be Triggered from Server Actions or Route Handlers Only",
       "problem": "revalidateTag() and revalidatePath() can only be called from Server Actions or Route Handlers, not from Server Component render functions.",
       "whyItMatters": "Calling revalidation functions during render creates a feedback loop: rendering triggers revalidation, which triggers re-rendering. This is prevented by Next.js, but attempting it causes errors. Proper cache invalidation is always event-driven (user action, webhook, scheduled job), not render-driven.",
@@ -107,7 +107,7 @@
       }
     },
     {
-      "id": "CA-003",
+      "id": "DYNAMIC_RENDER_TRIGGER-003",
       "title": "Runtime APIs Opt Routes Out of Full Route Cache",
       "problem": "Using runtime APIs (cookies(), headers(), searchParams) in a Server Component without Suspense wrapping causes the entire route to be dynamically rendered, disabling Full Route Cache (static HTML prerendering).",
       "whyItMatters": "Static routes are prerendered at build time and served from CDN with zero server compute cost. A single call to cookies() or headers() at the top level of a page forces every request to go to the server and re-render. This increases cost, latency, and server load at scale.",
@@ -158,7 +158,7 @@
       }
     },
     {
-      "id": "CA-004",
+      "id": "DYNAMIC_RENDER_TRIGGER-004",
       "title": "Router Cache Serves Stale Data Until Automatic Expiration",
       "problem": "The client-side Router Cache stores RSC Payload for visited routes and prefetched pages. After a Server Action mutation, the Router Cache may continue serving stale data on client-side navigation until it expires or is explicitly invalidated.",
       "whyItMatters": "The Router Cache is an in-memory client-side cache with a minimum 30-second stale time enforced by the client router. Mutations performed via Server Actions automatically invalidate the Data Cache and Full Route Cache, but the Router Cache requires a full page reload or explicit revalidation to clear, potentially showing stale data to users navigating between routes.",
@@ -202,7 +202,7 @@
       }
     },
     {
-      "id": "CA-005",
+      "id": "RSC_API_VIOLATION-005",
       "title": "Uncached Data Outside Suspense Blocks Prerendering (Cache Components Mode)",
       "problem": "When cacheComponents: true is enabled, accessing uncached or runtime data outside of a <Suspense> boundary or 'use cache' scope causes a build-time error: 'Uncached data was accessed outside of Suspense'.",
       "whyItMatters": "With Cache Components, Next.js enforces explicit handling of all data access patterns at build time. Any component that accesses non-deterministic or runtime data must either cache it ('use cache') or stream it (Suspense). This prevents accidental dynamic rendering of what should be static routes.",

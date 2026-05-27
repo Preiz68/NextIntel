@@ -141,13 +141,28 @@ export const serverActionsSerialization: Rule = {
       });
 
       for (const action of serverActions) {
+        // Enforce async actions
+        const isAsync = action.node.isAsync ? action.node.isAsync() : false;
+        if (!isAsync) {
+          diagnostics.push(
+            mapEventToDiagnostic(
+              "BOUNDARY_VIOLATION_DETECTED",
+              "SA-SERIALIZATION-001",
+              this.id,
+              analysis.filePath,
+              action.line,
+              `Server Action '${action.name}' is declared as a synchronous function. Server Actions must be asynchronous.`
+            )
+          );
+        }
+
         // Check arguments
         const params = action.node.getParameters
           ? action.node.getParameters()
           : [];
         for (const param of params) {
           const type = param.getType();
-          if (isTypeNonSerializable(type)) {
+          if (isTypeNonSerializable(type, new Set(), true)) {
             const typeText = type.getText();
             diagnostics.push(
               mapEventToDiagnostic(
@@ -186,7 +201,7 @@ export const serverActionsSerialization: Rule = {
           const expr = ret.getExpression();
           if (expr) {
             const type = getApparentType(expr.getType());
-            if (isTypeNonSerializable(type)) {
+            if (isTypeNonSerializable(type, new Set(), true)) {
               const typeText = type.getText();
               diagnostics.push(
                 mapEventToDiagnostic(

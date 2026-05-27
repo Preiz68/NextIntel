@@ -17,6 +17,8 @@ export interface TaintDetails {
   source: string; // The API or symbol name triggering the taint
   line: number;
   expression: string;
+  derived?: boolean;
+  originFile?: string;
 }
 
 export interface ModuleTaintSummary {
@@ -134,45 +136,227 @@ export function isInsideDeferredScope(node: Node): boolean {
   return false;
 }
 
+interface SymbolFlowEdge {
+  from: string;
+  to: string;
+}
+
+export function buildSymbolFlows(sourceFile: SourceFile): SymbolFlowEdge[] {
+  const edges: SymbolFlowEdge[] = [];
+
+  const addEdge = (from: string, to: string) => {
+    if (from !== to) {
+      edges.push({ from, to });
+    }
+  };
+
+  // 1. Variable declarations
+  sourceFile.getDescendantsOfKind(SyntaxKind.VariableDeclaration).forEach((varDecl) => {
+    const varName = varDecl.getName();
+    const init = varDecl.getInitializer();
+    if (init) {
+      init.getDescendantsOfKind(SyntaxKind.Identifier).forEach((id) => {
+        addEdge(id.getText(), varName);
+      });
+    }
+  });
+
+  // 2. Return statements in functions
+  sourceFile.getDescendantsOfKind(SyntaxKind.ReturnStatement).forEach((retStmt) => {
+    const expr = retStmt.getExpression();
+    if (expr) {
+      const ids = expr.getDescendantsOfKind(SyntaxKind.Identifier);
+      
+      const funcDecl = retStmt.getFirstAncestorByKind(SyntaxKind.FunctionDeclaration);
+      if (funcDecl) {
+        const funcName = funcDecl.getName();
+        if (funcName) {
+          ids.forEach((id) => addEdge(id.getText(), funcName));
+        }
+      }
+
+      const arrowFunc = retStmt.getFirstAncestorByKind(SyntaxKind.ArrowFunction);
+      if (arrowFunc) {
+        const varDecl = arrowFunc.getFirstAncestorByKind(SyntaxKind.VariableDeclaration);
+        if (varDecl) {
+          const varName = varDecl.getName();
+          ids.forEach((id) => addEdge(id.getText(), varName));
+        }
+      }
+    }
+  });
+
+  return edges;
+}
+
+export function propagateLocalTaints(
+  sourceFile: SourceFile,
+  directTaints: TaintDetails[],
+  edges: SymbolFlowEdge[]
+): TaintDetails[] {
+  const allTaints = [...directTaints];
+  const taintedNames = new Set<string>();
+  const worklist: { node: Node; type: TaintType }[] = [];
+
+  sourceFile.getDescendantsOfKind(SyntaxKind.Identifier).forEach((id) => {
+    const name = id.getText();
+    const dt = directTaints.find((t) => t.source === name && t.line === id.getStartLineNumber());
+    if (dt) {
+      worklist.push({ node: id, type: dt.type });
+    }
+  });
+
+  const visitedNodes = new Set<Node>();
+  const sourceFileObj = sourceFile;
+
+  while (worklist.length > 0) {
+    const { node, type } = worklist.shift()!;
+    if (visitedNodes.has(node)) continue;
+    visitedNodes.add(node);
+
+    const varDecl = node.getFirstAncestorByKind(SyntaxKind.VariableDeclaration);
+    if (varDecl && varDecl.getInitializer() && varDecl.getInitializer()!.containsRange(node.getStart(), node.getEnd())) {
+      const nameNode = varDecl.getNameNode();
+      const varName = nameNode.getText();
+      if (!taintedNames.has(varName)) {
+        taintedNames.add(varName);
+
+        allTaints.push({
+          state: "TAINTED",
+          type: type,
+          source: varName,
+          line: varDecl.getStartLineNumber(),
+          expression: varDecl.getText(),
+          derived: true,
+          originFile: sourceFileObj.getFilePath().replace(/\\/g, "/")
+        });
+
+        try {
+          if (Node.isIdentifier(nameNode)) {
+            const refs = nameNode.findReferencesAsNodes().filter(ref => ref.getSourceFile() === sourceFileObj);
+            refs.forEach((ref: Node) => worklist.push({ node: ref, type }));
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    const returnStmt = node.getFirstAncestorByKind(SyntaxKind.ReturnStatement);
+    if (returnStmt) {
+      const funcDecl = node.getFirstAncestorByKind(SyntaxKind.FunctionDeclaration);
+      if (funcDecl) {
+        const nameNode = funcDecl.getNameNode();
+        if (nameNode) {
+          const funcName = nameNode.getText();
+          if (!taintedNames.has(funcName)) {
+            taintedNames.add(funcName);
+
+            allTaints.push({
+              state: "TAINTED",
+              type: type,
+              source: funcName,
+              line: funcDecl.getStartLineNumber(),
+              expression: funcDecl.getText(),
+              derived: true,
+              originFile: sourceFileObj.getFilePath().replace(/\\/g, "/")
+            });
+
+            try {
+              if (Node.isIdentifier(nameNode)) {
+                const refs = nameNode.findReferencesAsNodes().filter(ref => ref.getSourceFile() === sourceFileObj);
+                refs.forEach((ref: Node) => worklist.push({ node: ref, type }));
+              }
+            } catch {
+              // ignore
+            }
+          }
+        }
+      }
+
+      const arrowFunc = node.getFirstAncestorByKind(SyntaxKind.ArrowFunction);
+      if (arrowFunc) {
+        const parentVar = arrowFunc.getFirstAncestorByKind(SyntaxKind.VariableDeclaration);
+        if (parentVar) {
+          const nameNode = parentVar.getNameNode();
+          const varName = nameNode.getText();
+          if (!taintedNames.has(varName)) {
+            taintedNames.add(varName);
+
+            allTaints.push({
+              state: "TAINTED",
+              type: type,
+              source: varName,
+              line: parentVar.getStartLineNumber(),
+              expression: parentVar.getText(),
+              derived: true,
+              originFile: sourceFileObj.getFilePath().replace(/\\/g, "/")
+            });
+
+            try {
+              if (Node.isIdentifier(nameNode)) {
+                const refs = nameNode.findReferencesAsNodes().filter(ref => ref.getSourceFile() === sourceFileObj);
+                refs.forEach((ref: Node) => worklist.push({ node: ref, type }));
+              }
+            } catch {
+              // ignore
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return allTaints;
+}
+
 /**
  * Analyze direct taints in a single SourceFile.
  */
 export function analyzeDirectTaints(sourceFile: SourceFile): TaintDetails[] {
-  const taints: TaintDetails[] = [];
+  const directTaints: TaintDetails[] = [];
+  const originFile = sourceFile.getFilePath().replace(/\\/g, "/");
 
-  // 1. Analyze Imports and Export re-exports
   const processSpecifier = (specifier: string, line: number, exprText: string) => {
     if (specifier === "server-only") {
-      taints.push({
+      directTaints.push({
         state: "TAINTED",
         type: "SERVER_ONLY",
         source: "server-only",
         line,
-        expression: exprText
+        expression: exprText,
+        derived: false,
+        originFile
       });
     } else if (NODE_NATIVE_MODULES.has(specifier)) {
-      taints.push({
+      directTaints.push({
         state: "TAINTED",
         type: "NODE_NATIVE_API",
         source: specifier,
         line,
-        expression: exprText
+        expression: exprText,
+        derived: false,
+        originFile
       });
     } else if (ORM_MODULES.has(specifier)) {
-      taints.push({
+      directTaints.push({
         state: "TAINTED",
         type: "NODE_NATIVE_API",
         source: specifier,
         line,
-        expression: exprText
+        expression: exprText,
+        derived: false,
+        originFile
       });
     } else if (specifier === "next/headers") {
-      taints.push({
+      directTaints.push({
         state: "TAINTED",
         type: "SERVER_ONLY",
         source: "next/headers",
         line,
-        expression: exprText
+        expression: exprText,
+        derived: false,
+        originFile
       });
     }
   };
@@ -193,13 +377,11 @@ export function analyzeDirectTaints(sourceFile: SourceFile): TaintDetails[] {
     }
   });
 
-  // 2. Analyze Identifiers for Browser Globals & env & request contexts
   sourceFile.getDescendantsOfKind(SyntaxKind.Identifier).forEach((id) => {
     const name = id.getText();
     const parent = id.getParent();
     if (!parent) return;
 
-    // Skip import declarations or variable names
     if (
       parent.isKind(SyntaxKind.ImportSpecifier) ||
       parent.isKind(SyntaxKind.ImportClause) ||
@@ -212,70 +394,84 @@ export function analyzeDirectTaints(sourceFile: SourceFile): TaintDetails[] {
       return;
     }
 
-    // Skip if it's a sub-property in property access (e.g. `foo.window`)
     if (parent.isKind(SyntaxKind.PropertyAccessExpression)) {
       if (parent.getNameNode() === id) return;
     }
 
-    // Check symbol to ensure it's not a local user-defined variable named 'window' etc.
     const symbol = id.getSymbol();
     if (symbol) {
       const decls = symbol.getDeclarations();
       const isLocal = decls.some((decl) => {
+        if (
+          decl.isKind(SyntaxKind.ImportSpecifier) ||
+          decl.isKind(SyntaxKind.ImportClause) ||
+          decl.isKind(SyntaxKind.NamespaceImport)
+        ) {
+          const impDecl = decl.getFirstAncestorByKind(SyntaxKind.ImportDeclaration);
+          if (impDecl) {
+            const specVal = impDecl.getModuleSpecifierValue();
+            if (specVal.startsWith(".") || path.isAbsolute(specVal)) {
+              return true;
+            }
+          }
+          return false;
+        }
         const pathStr = decl.getSourceFile().getFilePath();
         return !pathStr.includes("typescript/lib") && !pathStr.includes("node_modules");
       });
-      if (isLocal) return; // local variable, skip
+      if (isLocal) return;
     }
+
 
     const line = id.getStartLineNumber();
     const expression = parent.getText();
 
-    // Check browser globals
     if (BROWSER_GLOBALS.has(name)) {
-      // If inside a deferred scope (like useEffect or click callback), browser globals are expected/allowed in Client context.
-      // But they still carry taint if they leak to the render phase or into a server graph.
-      // We check if it is guarded.
       const guarded = isNodeConditionallyGuarded(id);
-      
-      // Note: even if it's inside a deferred scope, we taint it if it's in a shared module.
-      // But we lower its propagation urgency. For now, track it:
       const state: TaintState = guarded ? "CONDITIONALLY_TAINTED" : "TAINTED";
-      taints.push({
+      directTaints.push({
         state,
         type: "BROWSER_ONLY",
         source: name,
         line,
-        expression
+        expression,
+        derived: false,
+        originFile
       });
     }
 
-    // Check Next.js request APIs
     if (REQUEST_APIS.has(name)) {
       const guarded = isNodeConditionallyGuarded(id);
-      taints.push({
+      directTaints.push({
         state: guarded ? "CONDITIONALLY_TAINTED" : "TAINTED",
         type: "REQUEST_CONTEXT",
         source: name,
         line,
-        expression
+        expression,
+        derived: false,
+        originFile
       });
     }
 
-    // Check process.env (sensitive info)
     if (name === "process" && parent.getText().includes("process.env")) {
       const guarded = isNodeConditionallyGuarded(id);
-      taints.push({
+      directTaints.push({
         state: guarded ? "CONDITIONALLY_TAINTED" : "TAINTED",
         type: "PROCESS_ENV",
         source: "process.env",
         line,
-        expression
+        expression,
+        derived: false,
+        originFile
       });
     }
   });
 
-  return taints;
+  const edges = buildSymbolFlows(sourceFile);
+  const fullTaints = propagateLocalTaints(sourceFile, directTaints, edges);
+  (fullTaints as any).symbolFlows = edges;
+
+  return fullTaints;
 }
 
 /**
@@ -286,16 +482,15 @@ export class TaintEngine {
 
   constructor(
     private filePaths: string[],
-    private graph: any, // dagre-d3 or graphlib graph instance
+    private graph: any,
     private nodes: Map<string, any>,
-    private directTaintsMap: Map<string, TaintDetails[]>
+    private directTaintsMap: Map<string, TaintDetails[]>,
+    private analyses?: any[]
   ) {}
 
-  /**
-   * Run the taint propagation algorithm.
-   */
   propagate(): Map<string, ModuleTaintSummary> {
-    // 1. Initialize summaries with direct taints
+    const visitedEdges = new Set<string>();
+
     for (const filePath of this.filePaths) {
       const direct = this.directTaintsMap.get(filePath) || [];
       const overallState: TaintState = direct.some((t) => t.state === "TAINTED")
@@ -311,22 +506,13 @@ export class TaintEngine {
       });
     }
 
-    // 2. Propagation pass: we propagate TAINTED always, and CONDITIONALLY_TAINTED selectively.
-    // In Next.js, modules import dependencies.
-    // If file A imports file B, then in the dependency graph, there is an edge A -> B (A depends on B).
-    // If B is tainted, then A gets tainted because A imports B.
-    // So taint propagates BACKWARDS along the dependency edge (B -> A).
-    // Let's propagate in a worklist queue.
     const queue: string[] = [...this.filePaths];
-    const visited = new Set<string>();
 
     while (queue.length > 0) {
       const curr = queue.shift()!;
       const currSummary = this.moduleTaints.get(curr);
       if (!currSummary || currSummary.overallState === "CLEAN") continue;
 
-      // Find who imports `curr` (predecessors in the dependency graph)
-      // If A -> B, B is successor of A. So predecessors of `curr` are modules that depend on/import `curr`.
       const importers = this.graph?.predecessors(curr) || [];
 
       for (const importer of importers) {
@@ -335,35 +521,128 @@ export class TaintEngine {
 
         let changed = false;
 
-        for (const taint of currSummary.taints) {
-          // Check if this taint is already in importer
-          const hasTaint = importerSummary.taints.some(
-            (t) => t.source === taint.source && t.type === taint.type && t.state === taint.state
-          );
+        if (this.analyses) {
+          const importerAnalysis = this.analyses.find((a) => a.filePath === importer);
+          if (importerAnalysis) {
+            const importsFromB = importerAnalysis.importDetails.filter((imp: any) => {
+              const resolved = path.resolve(path.dirname(importer), imp.moduleSpecifier).replace(/\\/g, "/");
+              return resolved.replace(/\.[a-zA-Z]+$/, "") === curr.replace(/\.[a-zA-Z]+$/, "");
+            });
 
-          if (!hasTaint) {
-            // Apply Propagation Rules:
-            // - TAINTED always propagates.
-            // - CONDITIONALLY_TAINTED propagates ONLY if the importing module is a client module
-            //   (which we check via nodes or metadata) or if it's imported by a client boundary.
-            const importerNode = this.nodes.get(importer);
-            const isClientContext =
-              importerNode?.isClientComponent || 
-              importerNode?.semanticKind === "client-component" ||
-              importerNode?.semanticKind === "client-util";
+            const importedSymbols = new Set<string>();
+            for (const imp of importsFromB) {
+              if (imp.defaultImport) importedSymbols.add(imp.defaultImport);
+              if (imp.namespaceImport) importedSymbols.add(imp.namespaceImport);
+              for (const name of imp.namedImports) {
+                importedSymbols.add(name);
+              }
+            }
 
-            if (taint.state === "TAINTED" || isClientContext) {
-              importerSummary.taints.push({
-                ...taint,
-                expression: `(propagated from ${path.basename(curr)}) ${taint.expression}`
-              });
-              changed = true;
+            for (const taint of currSummary.taints) {
+              const isCapabilityTaint =
+                taint.type === "SERVER_ONLY" ||
+                taint.type === "REQUEST_CONTEXT" ||
+                taint.type === "NODE_NATIVE_API" ||
+                taint.type === "PROCESS_ENV" ||
+                taint.type === "BROWSER_ONLY";
+
+              if (isCapabilityTaint) {
+                // Transitive module-level bundle contamination analysis
+                const symbol = path.basename(curr, path.extname(curr));
+                const edgeKey = `${curr}->${importer}:${symbol}:${taint.type}`;
+                if (!visitedEdges.has(edgeKey)) {
+                  visitedEdges.add(edgeKey);
+
+                  const hasTaint = importerSummary.taints.some(
+                    (t) => t.type === taint.type && t.originFile === (taint.originFile || curr)
+                  );
+
+                  if (!hasTaint) {
+                    importerSummary.taints.push({
+                      state: taint.state,
+                      type: taint.type,
+                      source: symbol,
+                      line: 1,
+                      expression: `import from ${path.basename(curr)}`,
+                      derived: true,
+                      originFile: taint.originFile || curr
+                    });
+                    changed = true;
+                  }
+                }
+              } else if (importedSymbols.has(taint.source)) {
+                // Symbol-level flow analysis for serialization taints
+                const localEdges = importerAnalysis.symbolFlows || [];
+                const reachable = new Set<string>([taint.source]);
+                const q = [taint.source];
+                while (q.length > 0) {
+                  const s = q.shift()!;
+                  for (const edge of localEdges) {
+                    if (edge.from === s && !reachable.has(edge.to)) {
+                      reachable.add(edge.to);
+                      q.push(edge.to);
+                    }
+                  }
+                }
+
+                for (const symbol of reachable) {
+                  const edgeKey = `${curr}->${importer}:${symbol}:${taint.type}`;
+                  if (visitedEdges.has(edgeKey)) continue;
+                  visitedEdges.add(edgeKey);
+
+                  const hasTaint = importerSummary.taints.some(
+                    (t) => t.source === symbol && t.type === taint.type && t.state === taint.state
+                  );
+
+                  if (!hasTaint) {
+                    const declLine = importerAnalysis.exportDetails.find((e: any) => e.name === symbol)?.line || 1;
+                    
+                    importerSummary.taints.push({
+                      state: taint.state,
+                      type: taint.type,
+                      source: symbol,
+                      line: declLine,
+                      expression: `(propagated from ${path.basename(curr)}) ${symbol}`,
+                      derived: true,
+                      originFile: taint.originFile || curr
+                    });
+                    changed = true;
+                  }
+                }
+              }
+            }
+          }
+        } else {
+          for (const taint of currSummary.taints) {
+            const edgeKey = `${curr}->${importer}:${taint.source}:${taint.type}`;
+            if (visitedEdges.has(edgeKey)) continue;
+            visitedEdges.add(edgeKey);
+
+            const hasTaint = importerSummary.taints.some(
+              (t) => t.source === taint.source && t.type === taint.type && t.state === taint.state
+            );
+
+            if (!hasTaint) {
+              const importerNode = this.nodes.get(importer);
+              const isClientContext =
+                importerNode?.isClientComponent || 
+                importerNode?.semanticKind === "client-component" ||
+                importerNode?.semanticKind === "client-util";
+
+              if (taint.state === "TAINTED" || isClientContext) {
+                importerSummary.taints.push({
+                  ...taint,
+                  expression: `(propagated from ${path.basename(curr)}) ${taint.expression}`,
+                  derived: true,
+                  originFile: taint.originFile || curr
+                });
+                changed = true;
+              }
             }
           }
         }
 
         if (changed) {
-          // Re-evaluate overallState
           const hasTainted = importerSummary.taints.some((t) => t.state === "TAINTED");
           const hasCondTainted = importerSummary.taints.some((t) => t.state === "CONDITIONALLY_TAINTED");
           importerSummary.overallState = hasTainted

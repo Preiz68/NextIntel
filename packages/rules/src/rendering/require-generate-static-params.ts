@@ -31,8 +31,8 @@ export const requireGenerateStaticParams: Rule = {
     const productionRisks = constraint?.productionRisks ?? [];
 
     for (const analysis of context.analyses) {
-      // We only care about page components that are Server Components
-      if (analysis.executionModel.componentType !== "server") continue;
+      const isServer = !analysis.isClientComponent && analysis.executionModel.componentType !== "client";
+      if (!isServer) continue;
 
       const normalizedPath = analysis.filePath.replace(/\\/g, "/");
 

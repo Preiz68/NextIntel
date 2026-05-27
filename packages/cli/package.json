@@ -1,6 +1,6 @@
 {
   "name": "next-intel",
-  "version": "1.0.0",
+  "version": "2.1.0",
   "description": "Next.js Intelligence Engine CLI",
   "main": "dist/index.js",
   "bin": {

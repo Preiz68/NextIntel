@@ -30,11 +30,13 @@ export const wrapThirdPartyComponents: Rule = {
     const diagnostics: Diagnostic[] = [];
 
     for (const analysis of context.analyses) {
-      const isServerCtx = analysis.executionModel.componentType === "server";
-      if (!isServerCtx) continue;
+      const isServer =
+        !analysis.isClientComponent &&
+        analysis.executionModel.componentType !== "client";
+      if (!isServer) continue;
 
       const hasViolation = analysis.executionModel.boundaryViolations.includes(
-        "third-party component used directly in server component"
+        "third-party component used directly in server component",
       );
       if (!hasViolation) continue;
 
@@ -63,10 +65,10 @@ export const wrapThirdPartyComponents: Rule = {
               }
 
               const imp = analysis.importDetails.find(
-                (i) =>
+                (i: any) =>
                   i.namedImports.includes(baseTagName) ||
                   i.defaultImport === baseTagName ||
-                  i.namespaceImport === baseTagName
+                  i.namespaceImport === baseTagName,
               );
 
               if (imp && isThirdParty(imp.moduleSpecifier)) {
@@ -79,8 +81,8 @@ export const wrapThirdPartyComponents: Rule = {
                     this.id,
                     analysis.filePath,
                     line,
-                    `Third-party component '<${tagName}>' from '${imp.moduleSpecifier}' is used directly in a Server Component.`
-                  )
+                    `Third-party component '<${tagName}>' from '${imp.moduleSpecifier}' is used directly in a Server Component.`,
+                  ),
                 );
                 reported = true;
               }
@@ -97,8 +99,8 @@ export const wrapThirdPartyComponents: Rule = {
             this.id,
             analysis.filePath,
             1,
-            `Third-party components are used directly in a Server Component without wrapper.`
-          )
+            `Third-party components are used directly in a Server Component without wrapper.`,
+          ),
         );
       }
     }

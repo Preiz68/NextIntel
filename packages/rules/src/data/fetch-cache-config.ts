@@ -21,7 +21,7 @@ export const fetchCacheConfig: Rule = {
     const diagnostics: Diagnostic[] = [];
 
     // ── Fetch semantic knowledge for this rule ──────────────────────────────
-    const constraint = context.knowledgeRegistry.getConstraint("caching", "CA-001");
+    const constraint = context.knowledgeRegistry.getConstraint("caching", "DYNAMIC_RENDER_TRIGGER-001");
 
     const whyItMatters = constraint?.whyItMatters ?? "Explicit cache configurations ensure reproducible rendering behavior.";
     const quickFixes = constraint?.quickFixes ?? [];
@@ -41,7 +41,7 @@ export const fetchCacheConfig: Rule = {
           line: analysis.fetchCalls[0]?.line,
           severity: constraint?.severity ?? "warning",
           ruleId: this.id,
-          id: constraint?.id ?? "CA-001",
+          id: constraint?.id ?? "DYNAMIC_RENDER_TRIGGER-001",
 
           // ── Core message dynamically constructed from constraint ─────────
           message: `Implicit fetch caching detected. ${constraint?.problem ?? ""}`,

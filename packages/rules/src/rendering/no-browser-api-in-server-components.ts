@@ -14,6 +14,9 @@ export const noBrowserApiInServerComponents: Rule = {
     const diagnostics: Diagnostic[] = [];
 
     for (const analysis of context.analyses) {
+      const isServer = !analysis.isClientComponent && analysis.executionModel.componentType !== "client";
+      if (!isServer) continue;
+
       const leaks = (analysis.simulationFindings || []).filter(
         (f) => f.type === "ssr_leak"
       );

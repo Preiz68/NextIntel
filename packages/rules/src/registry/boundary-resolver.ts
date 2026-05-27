@@ -65,27 +65,27 @@ export interface BoundaryResolution {
 // ---------------------------------------------------------------------------
 
 const PHASE_META: Record<ExecutionPhase, Omit<BoundaryResolution, "phase">> = {
-  "rsc-render": {
+  "RSC_RENDER": {
     runtime: "Node.js (Server Runtime)",
     stageOrder: 1,
     stageLabel: "RSC tree construction",
   },
-  "bundler-graph-resolution": {
+  "BUNDLER_RESOLUTION": {
     runtime: "Webpack (Build Engine)",
     stageOrder: 2,
     stageLabel: "module graph resolution",
   },
-  "hydration": {
+  "HYDRATION": {
     runtime: "Browser (Client Runtime)",
     stageOrder: 3,
     stageLabel: "client-side hydration",
   },
-  "client-render": {
+  "CLIENT_RENDER": {
     runtime: "Browser (Client Runtime)",
     stageOrder: 4,
     stageLabel: "client fiber reconciliation",
   },
-  "server-action-execution": {
+  "SERVER_ACTION": {
     runtime: "Server Runtime (Mutation Boundary)",
     stageOrder: 5,
     stageLabel: "mutation invocation",
@@ -113,15 +113,15 @@ export function resolveBoundary(
   let phase: ExecutionPhase;
 
   if (fileMeta.isServerAction || fileMeta.kind === "server-action") {
-    phase = "server-action-execution";
+    phase = "SERVER_ACTION";
   } else if (nodeCtx.isClientToServerImport) {
-    phase = "bundler-graph-resolution";
+    phase = "BUNDLER_RESOLUTION";
   } else if (fileMeta.isClientComponent && nodeCtx.isHydrationSensitive) {
-    phase = "hydration";
+    phase = "HYDRATION";
   } else if (fileMeta.isClientComponent) {
-    phase = "client-render";
+    phase = "CLIENT_RENDER";
   } else {
-    phase = "rsc-render";
+    phase = "RSC_RENDER";
   }
 
   return { phase, ...PHASE_META[phase] };

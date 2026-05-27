@@ -74,13 +74,7 @@ export function detectSemanticKind(analysis: FileAnalysis): SemanticKind {
 
 export function detectRuntimeType(semanticKind: SemanticKind): RuntimeType {
   switch (semanticKind) {
-    case "server-action":
-      return "SERVER_ACTION";
-    case "route-handler":
-    case "middleware":
-      return "ROUTE_HANDLER";
     case "client-component":
-    case "client-util":
       return "CLIENT_COMPONENT";
     case "server-component":
     case "page":
@@ -91,9 +85,13 @@ export function detectRuntimeType(semanticKind: SemanticKind): RuntimeType {
     case "not-found":
     case "global-error":
     case "default":
-    case "server-util":
       return "SERVER_COMPONENT";
+    case "server-action":
+    case "route-handler":
+    case "middleware":
+    case "server-util":
+      return "SERVER_UTIL";
     default:
-      return "SHARED_MODULE";
+      return "SHARED_UTIL";
   }
 }

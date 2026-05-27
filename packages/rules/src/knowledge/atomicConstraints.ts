@@ -406,8 +406,52 @@ export const ATOMIC_CONSTRAINTS: Record<string, AtomicConstraint> = {
       "Keep Server Actions purely server-centric — consume all client context explicitly as input arguments",
       "Retrieve browser state (e.g. cookies, headers, local storage) in the client before initiating the Server Action call"
     ]
+  },
+  "HY-NON-DETERMINISTIC-001": {
+    id: "HY-NON-DETERMINISTIC-001",
+    semanticEvent: "HYDRATION_UNSTABLE_RENDER",
+    phase: "render",
+    concept: "client-components",
+    problem: "Non-deterministic functions (like Math.random, Date.now) accessed during top-level render of components cause hydration mismatches.",
+    whyItMatters: "Client components pre-render to HTML on the server. If a component generates a random value or reads the current timestamp during render, the server-generated HTML and the browser's first render will mismatch, leading to hydration errors.",
+    forbiddenConditions: ["Calling Math.random(), Date.now(), or other non-deterministic APIs directly inside the render path of a component."],
+    detectionStrategy: ["Scan React component render bodies for direct calls to Math.random(), Date.now(), or construction of new Date()."],
+    productionRisks: [
+      "Hydration mismatches causing visual flickers",
+      "React discarding pre-rendered server DOM, hurting LCP/CLS performance metrics"
+    ],
+    quickFix: [
+      "Wrap the non-deterministic calculation in useEffect or useMemo with a static fallback",
+      "Move the calculation to page/layout level and pass down as props"
+    ],
+    architectureGuidance: [
+      "Ensure all rendering functions are pure and deterministic. Side effects and dynamic browser values must be loaded after hydration."
+    ]
+  },
+  "HY-RENDER-MUTATION-001": {
+    id: "HY-RENDER-MUTATION-001",
+    semanticEvent: "BOUNDARY_VIOLATION_DETECTED",
+    phase: "render",
+    concept: "client-components",
+    problem: "State mutations or external writes inside the render body of a component violate React's pure rendering model.",
+    whyItMatters: "React component rendering must be pure. Modifying variables outside the component scope or mutating props during the render pass causes bugs, inconsistent states, and breaks React's performance optimizations.",
+    forbiddenConditions: ["Directly mutating props or assigning to variables declared outside the component function during rendering."],
+    detectionStrategy: ["Identify assignment operations to outer scope variables or properties of props inside a React component render body."],
+    productionRisks: [
+      "Race conditions and UI state bugs",
+      "Intermittent render caching issues",
+      "Hydration mismatches and broken application state"
+    ],
+    quickFix: [
+      "Move the side-effect / write into a useEffect callback",
+      "Pass modifications back to the parent component using a state callback"
+    ],
+    architectureGuidance: [
+      "Rendering is a pure calculation. All side effects (API calls, state updates, routing, external mutations) belong in event handlers or useEffect hooks."
+    ]
   }
 };
+
 
 export function mapEventToDiagnostic(
   event: SemanticEvent,

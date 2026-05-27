@@ -67,4 +67,5 @@ export interface FileAnalysis {
   taintState: "CLEAN" | "TAINTED" | "CONDITIONALLY_TAINTED";
   taints: any[];
   simulationFindings: any[];
+  symbolFlows?: { from: string; to: string }[];
 }

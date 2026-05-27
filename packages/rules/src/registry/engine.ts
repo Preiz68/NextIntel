@@ -10,8 +10,10 @@ import { getRuleSpec } from "./rule-registry.js";
 import { deduplicateDiagnostics as runDeduplication } from "./diagnostic-deduper.js";
 import { TaintEngine, ExecutionSimulator } from "engine";
 import path from "node:path";
+import { buildSemanticIR } from "./semantic-ir.js";
 
 // Export new modules so consumers can use them
+export { buildSemanticIR } from "./semantic-ir.js";
 export { RULE_REGISTRY, getRuleSpec, requireRuleSpec } from "./rule-registry.js";
 export { calculateSeverityScore, toSeverityLevel, toDiagnosticSeverity } from "./scoring.js";
 export { resolveBoundary, phaseMetadata } from "./boundary-resolver.js";
@@ -64,7 +66,8 @@ export class RuleEngine {
       context.analyses.map((a) => a.filePath),
       context.graph,
       context.nodes,
-      directTaintsMap
+      directTaintsMap,
+      context.analyses
     );
     const propagatedTaints = taintEngine.propagate();
     for (const a of context.analyses) {
@@ -88,7 +91,8 @@ export class RuleEngine {
       }
     }
 
-    const fullContext: RuleContext = { ...context, knowledgeRegistry: this.knowledgeRegistry };
+    const semanticIR = buildSemanticIR(context.graph, context.nodes, context.analyses);
+    const fullContext: RuleContext = { ...context, knowledgeRegistry: this.knowledgeRegistry, semanticIR };
     const allDiagnostics: Diagnostic[] = [];
 
     for (const rule of this.rules) {
@@ -101,7 +105,7 @@ export class RuleEngine {
     }
 
     // Deduplicate and collapse propagated diagnostics
-    return runDeduplication(allDiagnostics, (file, ruleId) => resolveRootCause(file, ruleId, context.graph, context.nodes));
+    return runDeduplication(allDiagnostics, (d) => resolveRootCause(d.file, d.id || d.ruleId, context.graph, context.nodes, d));
   }
 }
 
@@ -336,8 +340,15 @@ export function resolveRootCause(
   filePath: string,
   ruleId: string,
   graph: any,
-  nodes: Map<string, any>
+  nodes: Map<string, any>,
+  diagnostic?: any
 ): string {
+  if (ruleId === "CC-SERVER-IMPORT-001" || ruleId === "CC-RUNTIME-LEAK-001") {
+    return filePath;
+  }
+  if (diagnostic?.originFile) {
+    return diagnostic.originFile;
+  }
   if (!graph || !nodes) return filePath;
 
   if (ruleId === "CC-SERVER-IMPORT-001") {

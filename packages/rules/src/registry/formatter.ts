@@ -130,9 +130,8 @@ export function renderGroupedDiagnostics(diagnostics: Diagnostic[]): string {
       const fileMeta = buildFileMeta(group.file);
       const nodeCtx = buildNodeContext(ruleId, affects);
 
-      const resolved = spec
-        ? phaseMetadata(spec.phases[0]!)
-        : resolveBoundary(fileMeta, nodeCtx);
+      const resolved = resolveBoundary(fileMeta, nodeCtx);
+      const validity = spec?.phaseCorrectness?.[resolved.phase] ?? "invalid";
 
       const confidence = spec?.confidence ?? 1.0;
       const mode = spec?.detectionMode ?? "deterministic";
@@ -186,11 +185,13 @@ export function renderGroupedDiagnostics(diagnostics: Diagnostic[]): string {
 
       // Build text explanations
       const affectsStr = affects.length > 0 ? affects.join(", ") : "the affected symbol";
-      const causeText = spec
-        ? (affects.length > 0
-            ? `'${affectsStr}' — ${spec.message.cause.charAt(0).toLowerCase()}${spec.message.cause.slice(1)}`
-            : spec.message.cause)
-        : "Evaluation failed.";
+      const causeText = (ruleId === "CC-RUNTIME-LEAK-001" && ruleDiags[0]?.message)
+        ? ruleDiags[0].message
+        : (spec
+            ? (affects.length > 0
+                ? `'${affectsStr}' — ${spec.message.cause.charAt(0).toLowerCase()}${spec.message.cause.slice(1)}`
+                : spec.message.cause)
+            : "Evaluation failed.");
 
       const boundaryLabel = spec?.boundary ?? "UNKNOWN_BOUNDARY";
 
@@ -220,7 +221,7 @@ export function renderGroupedDiagnostics(diagnostics: Diagnostic[]): string {
       // Format sequence output
       output += `\n`;
       output += `    Boundary:          ${boundaryLabel}\n`;
-      output += `    Execution Phase:   ${resolved.phase} (Stage ${resolved.stageOrder} — ${resolved.stageLabel})\n`;
+      output += `    Execution Phase:   ${resolved.phase} (${validity} in this phase — Stage ${resolved.stageOrder} — ${resolved.stageLabel})\n`;
       output += `    Runtime:           ${resolved.runtime}\n`;
 
       const lineParts = lineDetails.map((ld) => {
@@ -235,10 +236,10 @@ export function renderGroupedDiagnostics(diagnostics: Diagnostic[]): string {
         output += `\n    Impact Scores:\n`;
         output += `      - Rendering:    ${imp.rendering.toFixed(1).padStart(4)} / 10\n`;
         output += `      - Hydration:    ${imp.hydration.toFixed(1).padStart(4)} / 10\n`;
-        output += `      - Bundle Size:  ${imp.bundleSize.toFixed(1).padStart(4)} / 10\n`;
+        output += `      - Bundle Size:  ${(imp.bundle || 0).toFixed(1).padStart(4)} / 10\n`;
         output += `      - Security:     ${imp.security.toFixed(1).padStart(4)} / 10\n`;
-        output += `      - Cache:        ${imp.caching.toFixed(1).padStart(4)} / 10\n`;
-        output += `      - Server Load:  ${imp.serverLoad.toFixed(1).padStart(4)} / 10\n`;
+        output += `      - Cache:        ${(imp.cache || 0).toFixed(1).padStart(4)} / 10\n`;
+        output += `      - Runtime:      ${(imp.runtime || 0).toFixed(1).padStart(4)} / 10\n`;
         output += `\n    ${severityColor}Overall Severity:  ${levelStr} (${scoring.score.toFixed(2)})\x1b[0m\n`;
       } else {
         output += `    Severity Rating:   ${levelStr} (${scoring.score.toFixed(2)})\n`;
@@ -249,8 +250,16 @@ export function renderGroupedDiagnostics(diagnostics: Diagnostic[]): string {
         output += `      ${line}\n`;
       }
 
-      output += `\n    Root Cause:\n`;
-      output += `      ${group.file}\n`;
+      const hasProp = firstDiag && (firstDiag as any).propagationImpact;
+      if (hasProp) {
+        const rootOrigin = (firstDiag as any).rootViolationOrigin;
+        const propImpact = (firstDiag as any).propagationImpact;
+        output += `\n    ❗ ROOT VIOLATION ORIGIN: ${path.basename(rootOrigin)}\n`;
+        output += `    ❗ PROPAGATION IMPACT:    ${path.basename(propImpact)}\n`;
+      } else {
+        output += `\n    Root Cause:\n`;
+        output += `      ${group.file}\n`;
+      }
 
       if (executionGraph) {
         output += `\n    Execution Graph:\n`;
@@ -304,9 +313,131 @@ export function renderGroupedDiagnostics(diagnostics: Diagnostic[]): string {
         }
       }
 
+      if (firstDiag && (firstDiag as any).safeRefactorSuggestion) {
+        output += `\n    💡 Safe Refactor Suggestion:\n`;
+        const lines = (firstDiag as any).safeRefactorSuggestion.split("\n");
+        for (const line of lines) {
+          output += `      ${line}\n`;
+        }
+      }
+
       output += `\n  \x1b[2m${"─".repeat(65)}\x1b[0m\n`;
     }
   }
+
+  // ── Global Project Score ───────────────────────────────────────────────────
+  const graph = getLastGraph();
+  const nodes = getLastGraphNodes();
+  
+  let weightedScoreSum = 0;
+  let totalWeight = 0;
+  let totalFiles = 0;
+
+  const fileDiagnosticsMap = new Map<string, Diagnostic[]>();
+  for (const d of diagnostics) {
+    if (!fileDiagnosticsMap.has(d.file)) {
+      fileDiagnosticsMap.set(d.file, []);
+    }
+    fileDiagnosticsMap.get(d.file)!.push(d);
+  }
+
+  // Iterate over all nodes in the graph (or fallback to diagnostics if graph is not built)
+  const allPaths = nodes ? Array.from(nodes.keys()) : Array.from(fileDiagnosticsMap.keys());
+  
+  for (const filePath of allPaths) {
+    totalFiles++;
+    const node = nodes?.get(filePath);
+    const kind = node?.semanticKind ?? "unknown";
+
+    // 1. Calculate fileScore
+    let fileScore = 0;
+    const fileDiags = fileDiagnosticsMap.get(filePath) ?? [];
+    for (const d of fileDiags) {
+      const spec = getRuleSpec(d.id);
+      const affects = extractAffects(d.message);
+      const fileMeta = buildFileMeta(filePath);
+      const nodeCtx = buildNodeContext(d.id, affects);
+      const resolved = spec
+        ? phaseMetadata(spec.phases[0]!)
+        : resolveBoundary(fileMeta, nodeCtx);
+      const confidence = spec?.confidence ?? 1.0;
+      const isGuarded = d.isGuarded ?? false;
+      const scoring = spec
+        ? calculateSeverityScore(d.id, resolved.phase, confidence, 1, isGuarded)
+        : { score: 5.0 };
+      fileScore += scoring.score;
+    }
+    fileScore = Math.min(10.0, fileScore);
+
+    // 2. Calculate fileWeight
+    let baseRouteImportance = 1.0;
+    if (["page", "layout", "template", "loading", "error", "not-found", "global-error", "default", "route-handler", "middleware"].includes(kind)) {
+      baseRouteImportance = 1.5;
+    } else if (["client-component", "server-component"].includes(kind)) {
+      baseRouteImportance = 1.2;
+    }
+
+    let inDegree = 0;
+    let outDegree = 0;
+    if (graph) {
+      try {
+        inDegree = graph.inDegree(filePath) ?? 0;
+        outDegree = graph.outDegree(filePath) ?? 0;
+      } catch {}
+    }
+    const centrality = inDegree + outDegree;
+    const centralityWeight = centrality > 0 ? 1 + Math.log(centrality) : 1.0;
+
+    let serverActionExposure = 1.0;
+    if (kind === "server-action" || filePath.toLowerCase().includes("action")) {
+      serverActionExposure = 1.3;
+    } else if (graph) {
+      const successors = graph.successors(filePath) || [];
+      const predecessors = graph.predecessors(filePath) || [];
+      const isRelated = [...successors, ...predecessors].some(p => {
+        const pNode = nodes?.get(p);
+        return pNode?.semanticKind === "server-action" || p.toLowerCase().includes("action");
+      });
+      if (isRelated) {
+        serverActionExposure = 1.3;
+      }
+    }
+
+    let clientBundleInclusion = 1.0;
+    const isClient = node?.isClientComponent === true || kind === "client-component" || kind === "client-util";
+    if (isClient) {
+      clientBundleInclusion = 1.2;
+    }
+
+    const fileWeight = baseRouteImportance * centralityWeight * serverActionExposure * clientBundleInclusion;
+
+    weightedScoreSum += fileScore * fileWeight;
+    totalWeight += fileWeight;
+  }
+
+  const projectScore = totalWeight > 0 ? (weightedScoreSum / totalWeight) : 0.0;
+  
+  function classifyProject(score: number): string {
+    if (score >= 8.0) return "CRITICAL";
+    if (score >= 6.0) return "HIGH";
+    if (score >= 4.0) return "MEDIUM";
+    return "LOW";
+  }
+
+  const projectClass = classifyProject(projectScore);
+  const summaryColor =
+    projectClass === "CRITICAL" ? "\x1b[31m"
+    : projectClass === "HIGH"   ? "\x1b[31m"
+    : projectClass === "MEDIUM" ? "\x1b[33m"
+    :                             "\x1b[32m";
+
+  output += `\n\x1b[1m=================================================================\x1b[0m\n`;
+  output += `\x1b[1m🚀 NextIntel Global Architecture Risk Index\x1b[0m\n`;
+  output += `\x1b[1m=================================================================\x1b[0m\n`;
+  output += `  Global Project Score:  ${summaryColor}${projectScore.toFixed(2)} / 10.0  (${projectClass})\x1b[0m\n`;
+  output += `  Analyzed Modules:      ${totalFiles} files\n`;
+  output += `  Risk Weight Model:     Route Importance + Centrality (log-weighted) + Actions + Client Bundle\n`;
+  output += `\x1b[1m=================================================================\x1b[0m\n`;
 
   return output;
 }

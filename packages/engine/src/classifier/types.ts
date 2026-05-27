@@ -31,9 +31,8 @@ export type RuntimeContext = "server" | "client" | "edge";
 export type RuntimeType =
   | "SERVER_COMPONENT"
   | "CLIENT_COMPONENT"
-  | "SERVER_ACTION"
-  | "ROUTE_HANDLER"
-  | "SHARED_MODULE";
+  | "SERVER_UTIL"
+  | "SHARED_UTIL";
 
 export type DynamicTrigger =
   | "cookies"

@@ -16,8 +16,8 @@ export const noRouteHandlersInClientComponents: Rule = {
     const diagnostics: Diagnostic[] = [];
 
     for (const analysis of context.analyses) {
-      const isClientCtx = analysis.executionModel.componentType === "client";
-      if (!isClientCtx) continue;
+      const isClient = analysis.isClientComponent || analysis.executionModel.componentType === "client";
+      if (!isClient) continue;
 
       let content = "";
       try {

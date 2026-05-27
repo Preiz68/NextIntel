@@ -32,7 +32,7 @@ export const noClientImportServerOnly: Rule = {
           const succNode = context.nodes.get(succ);
           const isServerAction =
             succNode?.semanticKind === "server-action" ||
-            succNode?.isServerAction ||
+            (succNode as any)?.isServerAction ||
             succ.toLowerCase().includes("action");
           if (isServerAction) continue;
 
@@ -40,7 +40,8 @@ export const noClientImportServerOnly: Rule = {
             visited.add(succ);
             parentMap.set(succ, curr);
 
-            const isServer = succNode?.isServerComponent || succNode?.semanticKind === "server-component";
+            const succSemantic = context.semanticIR?.get(succ);
+            const isServer = succNode?.isServerComponent || succNode?.semanticKind === "server-component" || succSemantic?.kind === "server-component";
             if (isServer) {
               targets.push(succ);
             } else {
@@ -84,16 +85,32 @@ export const noClientImportServerOnly: Rule = {
           // ignore
         }
 
-        diagnostics.push(
-          mapEventToDiagnostic(
-            "SERVER_IMPORT_IN_CLIENT_COMPONENT",
-            "CC-SERVER-IMPORT-001",
-            this.id,
-            nodePath,
-            line,
-            `Client Component '${nodePath}' imports Server Component/Module '${target}'.`
-          )
+        const diag = mapEventToDiagnostic(
+          "SERVER_IMPORT_IN_CLIENT_COMPONENT",
+          "CC-SERVER-IMPORT-001",
+          this.id,
+          nodePath,
+          line,
+          `Client Component '${nodePath}' imports Server Component/Module '${target}'.`
         );
+        diag.safeRefactorSuggestion = `// Pass the Server Component as children or slot props to preserve Server boundaries:
+// 1. In the parent Server Component:
+import ClientRoot from "./ClientRoot";
+import ServerPanel from "./ServerPanel";
+
+export default function Page() {
+  return (
+    <ClientRoot>
+      <ServerPanel />
+    </ClientRoot>
+  );
+}
+
+// 2. In your Client Component (ClientRoot.tsx):
+export default function ClientRoot({ children }: { children: React.ReactNode }) {
+  return <div className="client-wrapper">{children}</div>;
+}`;
+        diagnostics.push(diag);
       }
     }
 

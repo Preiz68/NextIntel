@@ -44,18 +44,18 @@ export interface ImpactScores {
 }
 
 export type ExecutionPhase =
-  | "rsc-render"
-  | "client-render"
-  | "hydration"
-  | "server-action-execution"
-  | "bundler-graph-resolution";
+  | "RSC_RENDER"
+  | "CLIENT_RENDER"
+  | "HYDRATION"
+  | "SERVER_ACTION"
+  | "BUNDLER_RESOLUTION";
 
 export type RuleCategory =
-  | "security"
-  | "runtime"
-  | "hydration"
-  | "architecture"
-  | "bundler";
+  | "RSC_API_VIOLATION"
+  | "CLIENT_GRAPH_LEAK"
+  | "SERVER_ACTION_MISUSE"
+  | "HYDRATION_MISMATCH"
+  | "DYNAMIC_RENDER_TRIGGER";
 
 export type ExecutionOwnership =
   | "server-only"
@@ -114,6 +114,9 @@ export interface RuleSpec {
 
   /** Execution phases where this rule is active */
   phases: ExecutionPhase[];
+
+  /** Valid/invalid declaration per phase */
+  phaseCorrectness: Record<ExecutionPhase, "valid" | "invalid">;
 
   /** AST / import / pattern matchers (informational — detection is in run()) */
   triggers: {
@@ -201,6 +204,68 @@ export interface Diagnostic {
    * consumers that only read `fix`. Prefer `quickFixes` in new code.
    */
   fix?: string;
+
+  /**
+   * Enriched architecture-aware refactoring suggestion showing correct code patterns.
+   */
+  safeRefactorSuggestion?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Module Capabilities and Semantic Nodes
+// ---------------------------------------------------------------------------
+
+export type Capability =
+  | "SERVER_ONLY"
+  | "CLIENT_SAFE"
+  | "REQUEST_CONTEXT"
+  | "NODE_RUNTIME"
+  | "BROWSER_RUNTIME"
+  | "RSC_SAFE"
+  | "ACTION_SAFE"
+  | "SERIALIZABLE"
+  | "NON_SERIALIZABLE"
+  | "HYDRATION_UNSAFE";
+
+export interface ExportNode {
+  name: string;
+  kind: "function" | "class" | "variable" | "type" | "interface" | "enum" | "unknown";
+  isSerializable: boolean;
+}
+
+export interface GraphEdge {
+  from: string;
+  to: string;
+  specifier: string;
+}
+
+export interface ModuleSemanticNode {
+  filePath: string;
+  kind:
+    | "page"
+    | "layout"
+    | "template"
+    | "loading"
+    | "error"
+    | "not-found"
+    | "global-error"
+    | "default"
+    | "route-handler"
+    | "middleware"
+    | "server-action"
+    | "client-component"
+    | "server-component"
+    | "util"
+    | "shared-util"
+    | "client-util"
+    | "server-util"
+    | "mixed-runtime-util"
+    | "unknown";
+  capabilities: Capability[];
+  imports: GraphEdge[];
+  exports: ExportNode[];
+  runtime: "node" | "browser" | "edge" | "shared";
+  phaseAccess: ExecutionPhase[];
 }
 
 // ---------------------------------------------------------------------------
@@ -219,6 +284,12 @@ export interface RuleContext {
    * architectural guidance from the knowledge packs at evaluation time.
    */
   knowledgeRegistry: KnowledgeRegistry;
+
+  /**
+   * Semantic Intermediate Representation Map containing Capability states,
+   * runtimes, export annotations, and phase permissions.
+   */
+  semanticIR?: Map<string, ModuleSemanticNode>;
 }
 
 // ---------------------------------------------------------------------------

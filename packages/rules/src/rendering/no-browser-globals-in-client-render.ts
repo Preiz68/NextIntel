@@ -14,6 +14,9 @@ export const noBrowserGlobalsInClientRender: Rule = {
     const diagnostics: Diagnostic[] = [];
 
     for (const analysis of context.analyses) {
+      const isClient = analysis.isClientComponent || analysis.executionModel.componentType === "client";
+      if (!isClient) continue;
+
       const mismatches = (analysis.simulationFindings || []).filter(
         (f) => f.type === "hydration_mismatch"
       );

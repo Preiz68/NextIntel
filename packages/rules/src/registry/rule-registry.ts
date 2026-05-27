@@ -7,9 +7,16 @@ export const RULE_REGISTRY: Record<string, RuleSpec> = {
   "SC-BROWSER-API-001": {
     id: "SC-BROWSER-API-001",
     name: "Browser API used in Server Component",
-    category: "runtime",
+    category: "RSC_API_VIOLATION",
     severityBase: 9,
-    phases: ["rsc-render"],
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "invalid",
+      BUNDLER_RESOLUTION: "valid",
+    },
     triggers: {
       imports: ["localStorage", "sessionStorage", "window", "document", "navigator", "location"],
     },
@@ -43,9 +50,16 @@ export const RULE_REGISTRY: Record<string, RuleSpec> = {
   "SC-HOOK-USAGE-001": {
     id: "SC-HOOK-USAGE-001",
     name: "React Hook used in Server Component",
-    category: "runtime",
+    category: "RSC_API_VIOLATION",
     severityBase: 9,
-    phases: ["rsc-render"],
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
     triggers: {
       nodeType: ["CallExpression"],
       patterns: [/\buse[A-Z]/],
@@ -80,9 +94,16 @@ export const RULE_REGISTRY: Record<string, RuleSpec> = {
   "SC-EVENT-HANDLER-001": {
     id: "SC-EVENT-HANDLER-001",
     name: "Event handler used in Server Component",
-    category: "runtime",
+    category: "RSC_API_VIOLATION",
     severityBase: 8,
-    phases: ["rsc-render"],
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
     triggers: {
       patterns: [/\bon[A-Z][a-zA-Z]+=/],
     },
@@ -116,9 +137,16 @@ export const RULE_REGISTRY: Record<string, RuleSpec> = {
   "SC-CONTEXT-001": {
     id: "SC-CONTEXT-001",
     name: "React Context used in Server Component",
-    category: "runtime",
+    category: "RSC_API_VIOLATION",
     severityBase: 8,
-    phases: ["rsc-render"],
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
     triggers: {
       imports: ["createContext", "useContext"],
     },
@@ -152,9 +180,16 @@ export const RULE_REGISTRY: Record<string, RuleSpec> = {
   "SC-MUTATION-001": {
     id: "SC-MUTATION-001",
     name: "State mutation during Server Component render",
-    category: "runtime",
+    category: "RSC_API_VIOLATION",
     severityBase: 8,
-    phases: ["rsc-render"],
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
     triggers: {
       imports: ["cookies", "revalidatePath", "revalidateTag"],
       patterns: [/cookies\(\)\.set/, /revalidatePath\(/, /revalidateTag\(/],
@@ -188,9 +223,16 @@ export const RULE_REGISTRY: Record<string, RuleSpec> = {
   "SC-SERIALIZATION-001": {
     id: "SC-SERIALIZATION-001",
     name: "Non-serializable prop passed to Client Component",
-    category: "runtime",
+    category: "RSC_API_VIOLATION",
     severityBase: 7,
-    phases: ["rsc-render"],
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
     triggers: {
       nodeType: ["JSXAttribute"],
       patterns: [/=\{(?:function|\(.*\)=>|async)/],
@@ -225,9 +267,16 @@ export const RULE_REGISTRY: Record<string, RuleSpec> = {
   "SC-THIRD-PARTY-001": {
     id: "SC-THIRD-PARTY-001",
     name: "Unwrapped third-party component in Server Component",
-    category: "runtime",
+    category: "RSC_API_VIOLATION",
     severityBase: 8,
-    phases: ["rsc-render"],
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "invalid",
+      BUNDLER_RESOLUTION: "valid",
+    },
     triggers: {
       nodeType: ["ImportDeclaration"],
     },
@@ -262,9 +311,16 @@ export const RULE_REGISTRY: Record<string, RuleSpec> = {
   "CC-ASYNC-CLIENT-001": {
     id: "CC-ASYNC-CLIENT-001",
     name: "Async Client Component declaration",
-    category: "runtime",
+    category: "RSC_API_VIOLATION",
     severityBase: 9,
-    phases: ["client-render"],
+    phases: ["CLIENT_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "valid",
+      CLIENT_RENDER: "invalid",
+      HYDRATION: "invalid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
     triggers: {
       patterns: [/^export\s+(?:default\s+)?async\s+function/m],
     },
@@ -299,9 +355,16 @@ export const RULE_REGISTRY: Record<string, RuleSpec> = {
   "CC-RUNTIME-LEAK-001": {
     id: "CC-RUNTIME-LEAK-001",
     name: "Server API imported in Client Component",
-    category: "runtime",
+    category: "CLIENT_GRAPH_LEAK",
     severityBase: 9,
-    phases: ["client-render"],
+    phases: ["CLIENT_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "valid",
+      CLIENT_RENDER: "invalid",
+      HYDRATION: "invalid",
+      SERVER_ACTION: "invalid",
+      BUNDLER_RESOLUTION: "valid",
+    },
     triggers: {
       imports: ["next/headers", "next/server", "server-only", "cookies", "headers", "draftMode"],
     },
@@ -335,9 +398,16 @@ export const RULE_REGISTRY: Record<string, RuleSpec> = {
   "CC-SERVER-IMPORT-001": {
     id: "CC-SERVER-IMPORT-001",
     name: "Server Component imported in Client Component",
-    category: "bundler",
+    category: "CLIENT_GRAPH_LEAK",
     severityBase: 9,
-    phases: ["bundler-graph-resolution"],
+    phases: ["BUNDLER_RESOLUTION"],
+    phaseCorrectness: {
+      RSC_RENDER: "valid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "invalid",
+    },
     triggers: {
       nodeType: ["ImportDeclaration"],
     },
@@ -371,9 +441,16 @@ export const RULE_REGISTRY: Record<string, RuleSpec> = {
   "CC-ROUTE-HANDLER-001": {
     id: "CC-ROUTE-HANDLER-001",
     name: "Internal API fetch in Client Component",
-    category: "architecture",
+    category: "CLIENT_GRAPH_LEAK",
     severityBase: 5,
-    phases: ["client-render"],
+    phases: ["CLIENT_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "valid",
+      CLIENT_RENDER: "invalid",
+      HYDRATION: "invalid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
     triggers: {
       patterns: [/fetch\(['"`]\/api\//],
     },
@@ -407,9 +484,16 @@ export const RULE_REGISTRY: Record<string, RuleSpec> = {
   "HY-RENDER-BROWSER-API-001": {
     id: "HY-RENDER-BROWSER-API-001",
     name: "Browser API accessed during Client render (Hydration Risk)",
-    category: "hydration",
+    category: "HYDRATION_MISMATCH",
     severityBase: 8,
-    phases: ["hydration"],
+    phases: ["HYDRATION"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "invalid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
     triggers: {
       imports: ["localStorage", "sessionStorage", "window", "document", "navigator"],
     },
@@ -445,9 +529,16 @@ export const RULE_REGISTRY: Record<string, RuleSpec> = {
   "SA-AUTH-001": {
     id: "SA-AUTH-001",
     name: "Server Action missing auth validation",
-    category: "security",
+    category: "SERVER_ACTION_MISUSE",
     severityBase: 9,
-    phases: ["server-action-execution"],
+    phases: ["SERVER_ACTION"],
+    phaseCorrectness: {
+      RSC_RENDER: "valid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "invalid",
+      BUNDLER_RESOLUTION: "valid",
+    },
     triggers: {
       nodeType: ["ServerAction"],
     },
@@ -481,9 +572,16 @@ export const RULE_REGISTRY: Record<string, RuleSpec> = {
   "SA-VALIDATION-001": {
     id: "SA-VALIDATION-001",
     name: "Server Action missing input schema validation",
-    category: "security",
+    category: "SERVER_ACTION_MISUSE",
     severityBase: 8,
-    phases: ["server-action-execution"],
+    phases: ["SERVER_ACTION"],
+    phaseCorrectness: {
+      RSC_RENDER: "valid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "invalid",
+      BUNDLER_RESOLUTION: "valid",
+    },
     triggers: {
       nodeType: ["ServerAction"],
       patterns: [/\.parse\(|\.safeParse\(|\.validate\(/],
@@ -518,9 +616,16 @@ export const RULE_REGISTRY: Record<string, RuleSpec> = {
   "SA-SERIALIZATION-001": {
     id: "SA-SERIALIZATION-001",
     name: "Non-serializable Server Action payload",
-    category: "architecture",
+    category: "SERVER_ACTION_MISUSE",
     severityBase: 7,
-    phases: ["server-action-execution"],
+    phases: ["SERVER_ACTION"],
+    phaseCorrectness: {
+      RSC_RENDER: "valid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "invalid",
+      BUNDLER_RESOLUTION: "valid",
+    },
     triggers: {
       nodeType: ["ServerAction"],
     },
@@ -554,9 +659,16 @@ export const RULE_REGISTRY: Record<string, RuleSpec> = {
   "SA-MUTATION-READ-001": {
     id: "SA-MUTATION-READ-001",
     name: "Server Action used for read operation",
-    category: "architecture",
+    category: "SERVER_ACTION_MISUSE",
     severityBase: 4,
-    phases: ["server-action-execution"],
+    phases: ["SERVER_ACTION"],
+    phaseCorrectness: {
+      RSC_RENDER: "valid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "invalid",
+      BUNDLER_RESOLUTION: "valid",
+    },
     triggers: {
       patterns: [/^(?:get|fetch|read|load|query)[A-Z]/],
     },
@@ -590,9 +702,16 @@ export const RULE_REGISTRY: Record<string, RuleSpec> = {
   "SA-BROWSER-API-001": {
     id: "SA-BROWSER-API-001",
     name: "Browser API used in Server Action",
-    category: "runtime",
+    category: "SERVER_ACTION_MISUSE",
     severityBase: 9,
-    phases: ["server-action-execution"],
+    phases: ["SERVER_ACTION"],
+    phaseCorrectness: {
+      RSC_RENDER: "valid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "invalid",
+      BUNDLER_RESOLUTION: "valid",
+    },
     triggers: {
       imports: ["localStorage", "sessionStorage", "window", "document", "navigator", "location"],
     },
@@ -625,9 +744,16 @@ export const RULE_REGISTRY: Record<string, RuleSpec> = {
   "RU-001-CRITICAL": {
     id: "RU-001-CRITICAL",
     name: "Native Node.js API in Edge Runtime",
-    category: "runtime",
+    category: "RSC_API_VIOLATION",
     severityBase: 10,
-    phases: ["rsc-render"],
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
     triggers: {
       imports: ["fs", "path", "net", "crypto"],
     },
@@ -660,9 +786,16 @@ export const RULE_REGISTRY: Record<string, RuleSpec> = {
   "RU-001-HIGH": {
     id: "RU-001-HIGH",
     name: "Restricted capability in Edge Runtime",
-    category: "runtime",
+    category: "RSC_API_VIOLATION",
     severityBase: 8,
-    phases: ["rsc-render"],
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
     triggers: {
       patterns: [/process\.env/],
     },
@@ -691,7 +824,178 @@ export const RULE_REGISTRY: Record<string, RuleSpec> = {
     confidence: 0.90,
     detectionMode: "heuristic",
   },
+
+  // ── Caching/Taxonomy specific rules ────────────────────────────────────────
+
+  "DYNAMIC_RENDER_TRIGGER-001": {
+    id: "DYNAMIC_RENDER_TRIGGER-001",
+    name: "Implicit fetch caching configuration",
+    category: "DYNAMIC_RENDER_TRIGGER",
+    severityBase: 5,
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
+    triggers: {
+      imports: [],
+    },
+    boundary: "RSC_RENDER",
+    message: {
+      cause: "fetch() call inside Server Component runs without explicit cache or revalidate options.",
+      impact: "Uses Next.js runtime defaults which might lead to unexpected dynamic render escalation or stale cache data.",
+      ruleExplanation: "Modern Next.js models do not cache fetches by default. Explicit cache settings avoid performance degradation.",
+    },
+    fix: {
+      primary: "Add { cache: 'force-cache' } or { next: { revalidate: ... } } to explicit caching targets.",
+      confidence: "HIGH",
+    },
+    severity: "MEDIUM",
+    kind: "cache",
+    confidence: 0.90,
+    detectionMode: "deterministic",
+  },
+
+  "DYNAMIC_RENDER_TRIGGER-003": {
+    id: "DYNAMIC_RENDER_TRIGGER-003",
+    name: "Dynamic API called in static route/layout segment",
+    category: "DYNAMIC_RENDER_TRIGGER",
+    severityBase: 8,
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
+    triggers: {
+      imports: ["cookies", "headers", "draftMode"],
+    },
+    boundary: "RSC_RENDER",
+    message: {
+      cause: "Dynamic server-only data APIs are called outside dynamic execution paths.",
+      impact: "Bypasses Full Route Cache and forces request-time server compute load for static targets.",
+      ruleExplanation: "Calling dynamic APIs during layout or page generation triggers request-time routing compilation.",
+    },
+    fix: {
+      primary: "Wrap the component in a Suspense boundary or extract it into a dynamic-rendered child component.",
+      confidence: "HIGH",
+    },
+    severity: "HIGH",
+    kind: "cache",
+    confidence: 0.95,
+    detectionMode: "deterministic",
+  },
+
+  "RSC_API_VIOLATION-005": {
+    id: "RSC_API_VIOLATION-005",
+    name: "'use cache' directive used in Client Component",
+    category: "RSC_API_VIOLATION",
+    severityBase: 9,
+    phases: ["CLIENT_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "valid",
+      CLIENT_RENDER: "invalid",
+      HYDRATION: "invalid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "invalid",
+    },
+    triggers: {
+      patterns: [/use cache/],
+    },
+    boundary: "CLIENT_RENDER",
+    message: {
+      cause: "The 'use cache' directive was defined in a Client Component file.",
+      impact: "Produces a Next.js bundler build compilation crash or client-side execution failure.",
+      ruleExplanation: "'use cache' is a server-exclusive data directive and cannot compile inside browser bundles.",
+    },
+    fix: {
+      primary: "Remove the 'use cache' directive or move the cached function to a Server Component/Utility module.",
+      confidence: "HIGH",
+    },
+    severity: "CRITICAL",
+    kind: "runtime",
+    confidence: 0.98,
+    detectionMode: "deterministic",
+  },
+
+  "HY-NON-DETERMINISTIC-001": {
+    id: "HY-NON-DETERMINISTIC-001",
+    name: "Non-deterministic render operation",
+    category: "HYDRATION_MISMATCH",
+    severityBase: 7,
+    phases: ["CLIENT_RENDER", "HYDRATION", "RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "invalid",
+      HYDRATION: "invalid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
+    triggers: {
+      patterns: [/Math\.random/, /Date\.now/, /new Date/],
+    },
+    boundary: "HYDRATION",
+    message: {
+      cause: "Non-deterministic functions (like Math.random, Date.now) accessed during top-level render of components cause hydration mismatches.",
+      impact: "Client components pre-render to HTML on the server. If a component generates a random value or reads the current timestamp during render, the server-generated HTML and the browser's first render will mismatch, leading to hydration errors.",
+      ruleExplanation: "Ensure all rendering functions are pure and deterministic. Side effects and dynamic browser values must be loaded after hydration.",
+    },
+    fix: {
+      primary: "Wrap the non-deterministic calculation in useEffect or useMemo with a static fallback.",
+      confidence: "HIGH",
+      confidenceReason: "Guarantees deterministic render on first pass, resolving hydration issues.",
+      architecture: "Defer dynamic values or side-effects until after the component mounts on the client.",
+      alternatives: [
+        "Move the calculation to page/layout level and pass down as props",
+      ],
+    },
+    severity: "MEDIUM",
+    kind: "hydration",
+    confidence: 0.95,
+    detectionMode: "deterministic",
+  },
+
+  "HY-RENDER-MUTATION-001": {
+    id: "HY-RENDER-MUTATION-001",
+    name: "Side effect / mutation in render path",
+    category: "HYDRATION_MISMATCH",
+    severityBase: 8,
+    phases: ["CLIENT_RENDER", "HYDRATION", "RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "invalid",
+      HYDRATION: "invalid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
+    triggers: {},
+    boundary: "HYDRATION",
+    message: {
+      cause: "State mutations or external writes inside the render body of a component violate React's pure rendering model.",
+      impact: "React component rendering must be pure. Modifying variables outside the component scope or mutating props during the render pass causes bugs, inconsistent states, and breaks React's performance optimizations.",
+      ruleExplanation: "Rendering is a pure calculation. All side effects (API calls, state updates, routing, external mutations) belong in event handlers or useEffect hooks.",
+    },
+    fix: {
+      primary: "Move the side-effect / write into a useEffect callback.",
+      confidence: "HIGH",
+      confidenceReason: "Keeps the render pass pure and isolates mutations to post-render phases.",
+      architecture: "Never mutate external state or props during rendering.",
+      alternatives: [
+        "Pass modifications back to the parent component using a state callback",
+      ],
+    },
+    severity: "MEDIUM",
+    kind: "runtime",
+    confidence: 0.90,
+    detectionMode: "deterministic",
+  },
 };
+
 
 /**
  * Look up a RuleSpec by constraint ID.

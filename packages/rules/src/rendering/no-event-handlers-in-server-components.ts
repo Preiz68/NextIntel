@@ -14,8 +14,8 @@ export const noEventHandlersInServerComponents: Rule = {
     const diagnostics: Diagnostic[] = [];
 
     for (const analysis of context.analyses) {
-      const isServerCtx = analysis.executionModel.componentType === "server";
-      if (!isServerCtx) continue;
+      const isServer = !analysis.isClientComponent && analysis.executionModel.componentType !== "client";
+      if (!isServer) continue;
 
       const hasViolation = analysis.executionModel.boundaryViolations.includes(
         "event handler in server component"

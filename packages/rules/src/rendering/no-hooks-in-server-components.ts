@@ -13,8 +13,8 @@ export const noHooksInServerComponents: Rule = {
     const diagnostics: Diagnostic[] = [];
 
     for (const analysis of context.analyses) {
-      const isServerCtx = analysis.executionModel.componentType === "server";
-      if (!isServerCtx || analysis.executionModel.usesClientHooks.length === 0)
+      const isServer = !analysis.isClientComponent && analysis.executionModel.componentType !== "client";
+      if (!isServer || analysis.executionModel.usesClientHooks.length === 0)
         continue;
 
       for (const hook of analysis.hookDetails) {

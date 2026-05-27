@@ -15,8 +15,8 @@ export const noMutationsInServerRender: Rule = {
     const diagnostics: Diagnostic[] = [];
 
     for (const analysis of context.analyses) {
-      const isServerCtx = analysis.executionModel.componentType === "server";
-      if (!isServerCtx) continue;
+      const isServer = !analysis.isClientComponent && analysis.executionModel.componentType !== "client";
+      if (!isServer) continue;
 
       let content = "";
       try {

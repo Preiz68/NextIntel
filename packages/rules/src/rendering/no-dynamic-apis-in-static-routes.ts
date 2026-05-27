@@ -1,5 +1,6 @@
 import { Rule, RuleContext, Diagnostic } from "../types.js";
 import { readFileSync } from "node:fs";
+import path from "node:path";
 
 /**
  * Rule: no-dynamic-apis-in-static-routes
@@ -8,7 +9,7 @@ import { readFileSync } from "node:fs";
  * inside layout components or segments marked as force-static, as this invalidates
  * static generation / Full Route Cache.
  *
- * Semantics: Sourced from "Caching" knowledge pack constraint CA-003.
+ * Semantics: Sourced from "Caching" knowledge pack constraint DYNAMIC_RENDER_TRIGGER-003.
  */
 export const noDynamicApisInStaticRoutes: Rule = {
   id: "no-dynamic-apis-in-static-routes",
@@ -21,88 +22,140 @@ export const noDynamicApisInStaticRoutes: Rule = {
   run(context: RuleContext): Diagnostic[] {
     const diagnostics: Diagnostic[] = [];
 
-    const constraint = context.knowledgeRegistry.getConstraint("caching", "CA-003");
+    const constraint = context.knowledgeRegistry.getConstraint("caching", "DYNAMIC_RENDER_TRIGGER-003");
     const whyItMatters = constraint?.whyItMatters ?? "Using runtime APIs (cookies(), headers()) in a Server Component without Suspense wrapping causes the entire route to be dynamically rendered, disabling Full Route Cache.";
     const quickFixes = constraint?.quickFixes ?? ["Extract the cookies()/headers() call into a child component wrapped in <Suspense>."];
     const architectureSuggestions = constraint?.architectureSuggestions ?? [];
     const optimizationGuidance = constraint?.optimizationGuidance ?? [];
     const productionRisks = constraint?.productionRisks ?? [];
 
-    for (const analysis of context.analyses) {
-      const isLayout = analysis.semanticKind === "layout" || analysis.filePath.endsWith("layout.tsx") || analysis.filePath.endsWith("layout.ts");
-      const hasDynamicTriggers = 
-        analysis.rendering.triggers.includes("cookies") || 
-        analysis.rendering.triggers.includes("headers") ||
-        analysis.rendering.triggers.includes("unstable_noStore") ||
-        analysis.rendering.triggers.includes("noStore");
+    // Helper to check if a file path is a page or layout
+    const isPageOrLayout = (filePath: string) => {
+      const base = path.basename(filePath).toLowerCase();
+      return base.startsWith("page.") || base.startsWith("layout.");
+    };
 
-      if (!hasDynamicTriggers) continue;
-
-      let content = "";
-      try {
-        content = readFileSync(analysis.filePath, "utf-8");
-      } catch {
-        continue;
+    // Helper to find if a node can reach a target node in the graph
+    const canReach = (start: string, target: string): boolean => {
+      if (start === target) return true;
+      const visited = new Set<string>();
+      const queue = [start];
+      while (queue.length > 0) {
+        const curr = queue.shift()!;
+        if (curr === target) return true;
+        if (visited.has(curr)) continue;
+        visited.add(curr);
+        const successors = context.graph.successors(curr) || [];
+        for (const succ of successors) {
+          queue.push(succ);
+        }
       }
+      return false;
+    };
 
-      // Check if this segment is configured for force-static
-      const isForceStatic = content.includes("force-static");
+    for (const analysis of context.analyses) {
+      // Apply hard partition guard: Server Component/Utility only
+      const isServer = !analysis.isClientComponent && analysis.executionModel.componentType !== "client";
+      if (!isServer) continue;
 
-      if (isLayout) {
-        // Flag dynamic APIs in layouts
-        let line = 1;
-        const lines = content.split("\n");
-        for (let i = 0; i < lines.length; i++) {
-          if (lines[i]!.includes("cookies(") || lines[i]!.includes("headers(")) {
-            line = i + 1;
-            break;
+      const filePath = analysis.filePath;
+      const hasDirectTriggers = analysis.rendering.triggers.length > 0;
+
+      if (isPageOrLayout(filePath)) {
+        let content = "";
+        try {
+          content = readFileSync(filePath, "utf-8");
+        } catch {
+          // ignore
+        }
+        const isForceStatic = content.includes("force-static");
+
+        if (hasDirectTriggers) {
+          // Case 1: Dynamic APIs in layout/page directly
+          let line = 1;
+          const lines = content.split("\n");
+          for (let i = 0; i < lines.length; i++) {
+            if (lines[i]!.includes("cookies(") || lines[i]!.includes("headers(")) {
+              line = i + 1;
+              break;
+            }
+          }
+
+          diagnostics.push({
+            file: filePath,
+            line,
+            severity: isForceStatic ? "error" : "warning",
+            ruleId: this.id,
+            id: constraint?.id ?? "DYNAMIC_RENDER_TRIGGER-003",
+            message: `Dynamic rendering transition: cookies()/headers() called directly inside page/layout. This triggers a transition to request-time dynamic rendering.`,
+            fix: quickFixes[0],
+            whyItMatters,
+            quickFixes,
+            architectureSuggestions,
+            optimizationGuidance,
+            productionRisks,
+            examples: constraint?.examples,
+          });
+        } else {
+          // Case 2: check if page/layout imports any utilities with dynamic triggers
+          let dynamicUtil: string | null = null;
+          let triggerSymbol: string | null = null;
+
+          for (const other of context.analyses) {
+            if (other.filePath !== filePath && other.rendering.triggers.length > 0) {
+              if (canReach(filePath, other.filePath)) {
+                dynamicUtil = other.filePath;
+                triggerSymbol = other.rendering.triggers[0]!;
+                break;
+              }
+            }
+          }
+
+          if (dynamicUtil) {
+            diagnostics.push({
+              file: filePath,
+              line: 1,
+              severity: isForceStatic ? "error" : "warning",
+              ruleId: this.id,
+              id: constraint?.id ?? "DYNAMIC_RENDER_TRIGGER-003",
+              message: `Dynamic rendering transition: Page/layout imports component/utility '${path.basename(dynamicUtil)}' which uses dynamic API '${triggerSymbol}()'. This shifts the route rendering from static to dynamic.`,
+              fix: `Isolate dynamic API usage or configure the segment dynamic rendering options.`,
+              whyItMatters,
+              quickFixes,
+              architectureSuggestions,
+              optimizationGuidance,
+              productionRisks,
+              examples: constraint?.examples,
+            });
           }
         }
+      } else {
+        // This is a utility file (not page/layout)
+        if (hasDirectTriggers) {
+          // Check if it is imported by any page or layout (i.e. if it can be reached from any page/layout)
+          const isImported = context.analyses.some(a => isPageOrLayout(a.filePath) && canReach(a.filePath, filePath));
 
-        diagnostics.push({
-          file: analysis.filePath,
-          line,
-          severity: "warning",
-          ruleId: this.id,
-          id: constraint?.id ?? "CA-003",
-          message: `Dynamic API called inside layout component. This invalidates static rendering (SSG) for this entire layout's subtree. Move dynamic APIs deep into leaves or wrap in <Suspense>.`,
-          fix: quickFixes[0],
-          whyItMatters,
-          quickFixes,
-          architectureSuggestions,
-          optimizationGuidance,
-          productionRisks,
-          examples: constraint?.examples,
-        });
-      } else if (isForceStatic) {
-        // Flag dynamic APIs in force-static files (Direct compile/runtime error)
-        let line = 1;
-        const lines = content.split("\n");
-        for (let i = 0; i < lines.length; i++) {
-          if (lines[i]!.includes("cookies(") || lines[i]!.includes("headers(")) {
-            line = i + 1;
-            break;
+          if (!isImported) {
+            // Case 3: isolated utility with headers() -> info severity / safe warning
+            diagnostics.push({
+              file: filePath,
+              line: 1,
+              severity: "info",
+              ruleId: this.id,
+              id: constraint?.id ?? "DYNAMIC_RENDER_TRIGGER-003",
+              message: `Dynamic API is accessed inside isolated utility '${path.basename(filePath)}'. This is safe since it is never imported by any active page or layout route segment.`,
+              fix: "No fix required while utility remains isolated.",
+              whyItMatters: "Dynamic APIs in unimported files do not trigger dynamic route compilation.",
+              quickFixes: [],
+              architectureSuggestions: ["Ensure this utility is only imported by dynamic contexts if used in the future."],
+              optimizationGuidance: [],
+              productionRisks: [],
+            });
           }
         }
-
-        diagnostics.push({
-          file: analysis.filePath,
-          line,
-          severity: "error", // In force-static it is a direct build error
-          ruleId: this.id,
-          id: constraint?.id ?? "CA-003",
-          message: `Dynamic API called inside route segment configured as 'force-static'. Next.js will throw a compile-time or runtime error.`,
-          fix: "Remove dynamic APIs or change dynamic segment configuration.",
-          whyItMatters,
-          quickFixes,
-          architectureSuggestions,
-          optimizationGuidance,
-          productionRisks,
-          examples: constraint?.examples,
-        });
       }
     }
 
     return diagnostics;
-  },
+  }
 };

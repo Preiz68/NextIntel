@@ -133,7 +133,7 @@ export class ExecutionSimulator {
       }
 
       // Pass 3: Server Action Execution Pass
-      if (a.runtimeType === "SERVER_ACTION") {
+      if (a.semanticKind === "server-action") {
         // We can check if any browser APIs are accessed inside the action
         a.browserAPIs.forEach((api) => {
           findings.push({

@@ -1,391 +1,156 @@
-import type { ExecutionPhase, SeverityLevel, ImpactScores } from "../types.js";
-
-
-// ---------------------------------------------------------------------------
-// Contextual phase multipliers applied PER-DIMENSION
-// ---------------------------------------------------------------------------
-
-/** When a violation executes in the browser, it cannot affect server load. */
-const BROWSER_PHASES = new Set<ExecutionPhase>(["client-render", "hydration"]);
-
-/** When a violation executes at the bundler level it does not affect runtime rendering. */
-const BUNDLER_PHASES = new Set<ExecutionPhase>(["bundler-graph-resolution"]);
-
-/** When a violation executes at the server-action boundary. */
-const ACTION_PHASES = new Set<ExecutionPhase>(["server-action-execution"]);
+import type { ExecutionPhase, SeverityLevel, RuleCategory } from "../types.js";
+import { getRuleSpec } from "./rule-registry.js";
 
 // ---------------------------------------------------------------------------
-// Rule-specific impact score profiles
-// ---------------------------------------------------------------------------
-// Each key matches a constraint ID emitted by the rules engine.
-// All values are in the range 0-10.
-
-export const RULE_SCORING_PROFILES: Record<string, ImpactScores> = {
-
-  // ── Server Component rules ──────────────────────────────────────────────
-
-  "SC-BROWSER-API-001": {
-    hydration:   6,
-    rendering:  10,
-    bundleSize:  0,
-    caching:     2,
-    security:    0,
-    serverLoad:  9,
-  },
-
-  "SC-HOOK-USAGE-001": {
-    hydration:   7,
-    rendering:  10,
-    bundleSize:  0,
-    caching:     2,
-    security:    0,
-    serverLoad:  9,
-  },
-
-  "SC-EVENT-HANDLER-001": {
-    hydration:   5,
-    rendering:   9,
-    bundleSize:  1,
-    caching:     1,
-    security:    1,
-    serverLoad:  7,
-  },
-
-  "SC-CONTEXT-001": {
-    hydration:   5,
-    rendering:   8,
-    bundleSize:  0,
-    caching:     1,
-    security:    0,
-    serverLoad:  6,
-  },
-
-  "SC-MUTATION-001": {
-    hydration:   6,
-    rendering:   7,
-    bundleSize:  0,
-    caching:     8,
-    security:    4,
-    serverLoad:  7,
-  },
-
-  "SC-SERIALIZATION-001": {
-    hydration:   8,
-    rendering:   8,
-    bundleSize:  3,
-    caching:     2,
-    security:    2,
-    serverLoad:  5,
-  },
-
-  "SC-THIRD-PARTY-001": {
-    hydration:   5,
-    rendering:   8,
-    bundleSize:  6,
-    caching:     2,
-    security:    3,
-    serverLoad:  7,
-  },
-
-  // ── Client Component rules ──────────────────────────────────────────────
-
-  "CC-ASYNC-CLIENT-001": {
-    hydration:  10,
-    rendering:  10,
-    bundleSize: 10,
-    caching:     8,
-    security:    0,
-    serverLoad:  0, // This is a client-only crash — no server load impact
-  },
-
-  "CC-RUNTIME-LEAK-001": {
-    hydration:   6,
-    rendering:   9,
-    bundleSize:  8,
-    caching:     3,
-    security:    7,
-    serverLoad:  0, // Executes in client bundle — no server load impact
-  },
-
-  "CC-SERVER-IMPORT-001": {
-    hydration:   4,
-    rendering:   7,
-    bundleSize: 10,
-    caching:     5,
-    security:    8,
-    serverLoad:  0, // Bundler-phase violation — no server runtime load
-  },
-
-  "CC-ROUTE-HANDLER-001": {
-    hydration:   2,
-    rendering:   5,
-    bundleSize:  2,
-    caching:     8,
-    security:    3,
-    serverLoad:  6,
-  },
-
-  // ── Hydration rules ─────────────────────────────────────────────────────
-
-  "HY-RENDER-BROWSER-API-001": {
-    hydration:  10,
-    rendering:   8,
-    bundleSize:  0,
-    caching:     4,
-    security:    0,
-    serverLoad:  0, // Browser-side mismatch — no server load impact
-  },
-
-  // ── Server Action rules ─────────────────────────────────────────────────
-
-  "SA-AUTH-001": {
-    hydration:   3,
-    rendering:   5,
-    bundleSize:  0,
-    caching:     2,
-    security:   10,
-    serverLoad:  7,
-  },
-
-  "SA-VALIDATION-001": {
-    hydration:   2,
-    rendering:   4,
-    bundleSize:  0,
-    caching:     2,
-    security:    9,
-    serverLoad:  6,
-  },
-
-  "SA-SERIALIZATION-001": {
-    hydration:   2,
-    rendering:   7,
-    bundleSize:  2,
-    caching:     3,
-    security:    3,
-    serverLoad:  6,
-  },
-
-  "SA-MUTATION-READ-001": {
-    hydration:   0,
-    rendering:   2,
-    bundleSize:  0,
-    caching:     9,
-    security:    1,
-    serverLoad:  8,
-  },
-
-  "SA-READ-ACTION-001": {
-    hydration:   0,
-    rendering:   2,
-    bundleSize:  0,
-    caching:     9,
-    security:    1,
-    serverLoad:  8,
-  },
-
-  "SA-BROWSER-API-001": {
-    hydration:   0,
-    rendering:  10,
-    bundleSize:  0,
-    caching:     2,
-    security:    0,
-    serverLoad:  9,
-  },
-
-  "SA-ROUTE-HANDLER-001": {
-    hydration:   1,
-    rendering:   3,
-    bundleSize:  1,
-    caching:     5,
-    security:    6,
-    serverLoad:  5,
-  },
-
-  // ── Architecture / production / data rules (fallback IDs) ──────────────
-
-  "CA-001": {
-    hydration:   0,
-    rendering:   2,
-    bundleSize:  0,
-    caching:    10,
-    security:    1,
-    serverLoad:  6,
-  },
-
-  "RV-002": {
-    hydration:   1,
-    rendering:   3,
-    bundleSize:  0,
-    caching:    10,
-    security:    0,
-    serverLoad:  5,
-  },
-
-  "BD-003": {
-    hydration:   2,
-    rendering:   4,
-    bundleSize:  5,
-    caching:     3,
-    security:    2,
-    serverLoad:  4,
-  },
-
-  "RO-002": {
-    hydration:   0,
-    rendering:   3,
-    bundleSize:  1,
-    caching:     2,
-    security:    1,
-    serverLoad:  2,
-  },
-
-  "RU-001": {
-    hydration:   2,
-    rendering:   5,
-    bundleSize:  0,
-    caching:     2,
-    security:    3,
-    serverLoad:  8,
-  },
-
-  "MW-002": {
-    hydration:   1,
-    rendering:   4,
-    bundleSize:  2,
-    caching:     4,
-    security:    5,
-    serverLoad:  6,
-  },
-
-  "DF-001": {
-    hydration:   1,
-    rendering:   5,
-    bundleSize:  2,
-    caching:     9,
-    security:    1,
-    serverLoad:  8,
-  },
-
-  "SE-001": {
-    hydration:   0,
-    rendering:   2,
-    bundleSize:  5,
-    caching:     1,
-    security:   10,
-    serverLoad:  2,
-  },
-
-  "OB-002": {
-    hydration:   0,
-    rendering:   1,
-    bundleSize:  1,
-    caching:     1,
-    security:    2,
-    serverLoad:  4,
-  },
-
-  "RU-001-CRITICAL": {
-    hydration:  10,
-    rendering:  10,
-    bundleSize: 10,
-    caching:    10,
-    security:   10,
-    serverLoad: 10,
-  },
-
-  "RU-001-HIGH": {
-    hydration:   8,
-    rendering:   8,
-    bundleSize:  8,
-    caching:     8,
-    security:    8,
-    serverLoad:  8,
-  },
-};
-
-/** Default profile applied when a rule ID is not found in RULE_SCORING_PROFILES. */
-const DEFAULT_PROFILE: ImpactScores = {
-  hydration:  5,
-  rendering:  5,
-  bundleSize: 3,
-  caching:    3,
-  security:   3,
-  serverLoad: 3,
-};
-
-// ---------------------------------------------------------------------------
-// Contextual weighting: apply phase-specific dimension overrides
+// Multi-axis Risk Vector
 // ---------------------------------------------------------------------------
 
-function applyPhaseContextWeighting(
-  scores: ImpactScores,
-  phase: ExecutionPhase,
-): ImpactScores {
-  const adjusted = { ...scores };
-
-  if (BROWSER_PHASES.has(phase)) {
-    // Client-only violations cannot contribute to server compute load
-    adjusted.serverLoad = 0;
-  }
-
-  if (BUNDLER_PHASES.has(phase)) {
-    // Build-time violations don't cause runtime rendering crashes directly
-    adjusted.rendering = Math.min(adjusted.rendering, 7);
-    // But they do affect bundle size heavily — let that score stand
-    adjusted.serverLoad = 0;
-  }
-
-  if (ACTION_PHASES.has(phase)) {
-    // Server action crashes don't cause hydration mismatches
-    adjusted.hydration = Math.min(adjusted.hydration, 3);
-  }
-
-  return adjusted;
+export interface RiskVector {
+  rendering: number;   // SSR/RSC impact
+  hydration: number;   // hydration mismatch risk
+  security: number;    // leakage / auth risk
+  bundle: number;      // client size impact
+  runtime: number;     // runtime crash probability
+  cache: number;       // invalidation / caching risk
 }
 
 // ---------------------------------------------------------------------------
-// Weighted overall severity formula
+// Rule Category Base Impacts
 // ---------------------------------------------------------------------------
-// Weights must sum to 1.0:
-//   Security            = 0.40
-//   Runtime Crash       = 0.25
-//   Boundary Violation  = 0.20
-//   Propagation Depth   = 0.10
-//   Cache Impact        = 0.05
 
-function computeOverallSeverity(scores: ImpactScores, propagationDepth: number = 1): number {
-  const security = scores.security;
-  const runtimeCrash = scores.rendering;
-  const boundaryViolation = Math.max(scores.hydration, scores.bundleSize);
-  const cacheImpact = scores.caching;
-  const propDepth = Math.min(10, propagationDepth);
+export const RULE_IMPACT: Record<RuleCategory, RiskVector> = {
+  CLIENT_GRAPH_LEAK: {
+    rendering: 8,
+    runtime: 10,
+    security: 9,
+    bundle: 10,
+    hydration: 0,
+    cache: 0,
+  },
+  RSC_API_VIOLATION: {
+    rendering: 7,
+    runtime: 10,
+    security: 0,
+    bundle: 0,
+    hydration: 0,
+    cache: 3,
+  },
+  HYDRATION_MISMATCH: {
+    rendering: 6,
+    hydration: 10,
+    security: 0,
+    bundle: 0,
+    runtime: 0,
+    cache: 0,
+  },
+  SERVER_ACTION_MISUSE: {
+    rendering: 0,
+    runtime: 8,
+    security: 7,
+    bundle: 0,
+    hydration: 0,
+    cache: 0,
+  },
+  DYNAMIC_RENDER_TRIGGER: {
+    rendering: 8,
+    runtime: 0,
+    security: 0,
+    bundle: 0,
+    hydration: 0,
+    cache: 8,
+  },
+};
 
+// ---------------------------------------------------------------------------
+// Rule-specific Risk Vector Profiles
+// ---------------------------------------------------------------------------
+
+export const RULE_SCORING_PROFILES: Record<string, RiskVector> = {
+  "SC-BROWSER-API-001": { rendering: 10, hydration: 6, security: 0, bundle: 0, runtime: 10, cache: 2 },
+  "SC-HOOK-USAGE-001": { rendering: 10, hydration: 7, security: 0, bundle: 0, runtime: 10, cache: 2 },
+  "SC-EVENT-HANDLER-001": { rendering: 9, hydration: 5, security: 1, bundle: 1, runtime: 8, cache: 1 },
+  "SC-CONTEXT-001": { rendering: 8, hydration: 5, security: 0, bundle: 0, runtime: 7, cache: 1 },
+  "SC-MUTATION-001": { rendering: 7, hydration: 6, security: 4, bundle: 0, runtime: 7, cache: 8 },
+  "SC-SERIALIZATION-001": { rendering: 8, hydration: 8, security: 2, bundle: 3, runtime: 6, cache: 2 },
+  "SC-THIRD-PARTY-001": { rendering: 8, hydration: 5, security: 3, bundle: 6, runtime: 7, cache: 2 },
+
+  "CC-ASYNC-CLIENT-001": { rendering: 10, hydration: 10, security: 0, bundle: 10, runtime: 10, cache: 8 },
+  "CC-RUNTIME-LEAK-001": { rendering: 9, hydration: 6, security: 7, bundle: 8, runtime: 9, cache: 3 },
+  "CC-SERVER-IMPORT-001": { rendering: 7, hydration: 4, security: 8, bundle: 10, runtime: 7, cache: 5 },
+  "CC-ROUTE-HANDLER-001": { rendering: 5, hydration: 2, security: 3, bundle: 2, runtime: 4, cache: 8 },
+
+  "HY-RENDER-BROWSER-API-001": { rendering: 8, hydration: 10, security: 0, bundle: 0, runtime: 6, cache: 4 },
+  "HY-NON-DETERMINISTIC-001": { rendering: 6, hydration: 10, security: 0, bundle: 0, runtime: 5, cache: 3 },
+  "HY-RENDER-MUTATION-001": { rendering: 7, hydration: 8, security: 2, bundle: 0, runtime: 6, cache: 5 },
+
+
+  "SA-AUTH-001": { rendering: 5, hydration: 3, security: 10, bundle: 0, runtime: 7, cache: 2 },
+  "SA-VALIDATION-001": { rendering: 4, hydration: 2, security: 9, bundle: 0, runtime: 6, cache: 2 },
+  "SA-SERIALIZATION-001": { rendering: 7, hydration: 2, security: 3, bundle: 2, runtime: 6, cache: 3 },
+  "SA-MUTATION-READ-001": { rendering: 2, hydration: 0, security: 1, bundle: 0, runtime: 3, cache: 9 },
+  "SA-BROWSER-API-001": { rendering: 10, hydration: 0, security: 0, bundle: 0, runtime: 10, cache: 2 },
+
+  "RU-001-CRITICAL": { rendering: 10, hydration: 10, security: 10, bundle: 10, runtime: 10, cache: 10 },
+  "RU-001-HIGH": { rendering: 8, hydration: 8, security: 8, bundle: 8, runtime: 8, cache: 8 },
+
+  "DYNAMIC_RENDER_TRIGGER-001": { rendering: 5, hydration: 0, security: 0, bundle: 0, runtime: 3, cache: 8 },
+  "DYNAMIC_RENDER_TRIGGER-003": { rendering: 8, hydration: 0, security: 0, bundle: 0, runtime: 6, cache: 8 },
+  "RSC_API_VIOLATION-005": { rendering: 9, hydration: 0, security: 0, bundle: 0, runtime: 9, cache: 3 },
+};
+
+const DEFAULT_PROFILE: RiskVector = {
+  rendering: 5,
+  hydration: 5,
+  security: 3,
+  bundle: 3,
+  runtime: 5,
+  cache: 3,
+};
+
+// ---------------------------------------------------------------------------
+// Weighted deterministic score calculation
+// ---------------------------------------------------------------------------
+
+const WEIGHTS = {
+  runtime: 0.30,
+  security: 0.25,
+  rendering: 0.15,
+  hydration: 0.15,
+  bundle: 0.10,
+  cache: 0.05,
+};
+
+function normalize(v: RiskVector) {
+  return {
+    rendering: (v.rendering || 0) / 10,
+    hydration: (v.hydration || 0) / 10,
+    security: (v.security || 0) / 10,
+    bundle: (v.bundle || 0) / 10,
+    runtime: (v.runtime || 0) / 10,
+    cache: (v.cache || 0) / 10,
+  };
+}
+
+export function score(v: RiskVector): number {
+  const n = normalize(v);
   return (
-    security * 0.40 +
-    runtimeCrash * 0.25 +
-    boundaryViolation * 0.20 +
-    propDepth * 0.10 +
-    cacheImpact * 0.05
-  );
+    n.runtime * WEIGHTS.runtime +
+    n.security * WEIGHTS.security +
+    n.rendering * WEIGHTS.rendering +
+    n.hydration * WEIGHTS.hydration +
+    n.bundle * WEIGHTS.bundle +
+    n.cache * WEIGHTS.cache
+  ) * 10;
 }
-
-// ---------------------------------------------------------------------------
-// Public types and exports
-// ---------------------------------------------------------------------------
 
 export interface ScoringResult {
   score: number;
   level: SeverityLevel;
-  impactScores: ImpactScores;
+  impactScores: RiskVector;
 }
 
 /**
  * Calculate a multi-dimensional, context-aware severity score for a constraint.
- *
- * @param ruleId   - The constraint ID (e.g. "CC-ASYNC-CLIENT-001", "SA-AUTH-001")
- * @param phase    - The execution phase in which the violation occurs
- * @param confidence - Detection confidence factor (0-1); adjusts score slightly
- * @param propagationDepth - Traced dependency path depth
  */
 export function calculateSeverityScore(
   ruleId: string,
@@ -394,36 +159,53 @@ export function calculateSeverityScore(
   propagationDepth: number = 1,
   isGuarded: boolean = false,
 ): ScoringResult {
-  // 1. Look up base profile (fall back to defaults for unmapped rules)
-  const baseProfile = RULE_SCORING_PROFILES[ruleId] ?? DEFAULT_PROFILE;
+  // 1. Resolve base profile
+  let baseProfile = RULE_SCORING_PROFILES[ruleId];
+  if (!baseProfile) {
+    const spec = getRuleSpec(ruleId);
+    if (spec && spec.category && RULE_IMPACT[spec.category]) {
+      baseProfile = RULE_IMPACT[spec.category];
+    } else {
+      baseProfile = DEFAULT_PROFILE;
+    }
+  }
 
-  // 2. Apply contextual phase weighting
-  const contextualScores = applyPhaseContextWeighting(baseProfile, phase);
+  // 2. Adjust based on execution context/phase
+  const adjusted = { ...baseProfile };
+  if (phase === "CLIENT_RENDER" || phase === "HYDRATION") {
+    // Browser phases don't crash Node server runtimes
+    adjusted.rendering = Math.max(0, adjusted.rendering - 2);
+  }
 
-  // 3. Compute overall severity via weighted formula
-  let rawOverall = computeOverallSeverity(contextualScores, propagationDepth);
+  // 3. Compute overall severity via deterministic formula
+  let rawScore = score(adjusted);
 
   if (isGuarded) {
-    rawOverall = Math.min(3.5, rawOverall * 0.5);
+    rawScore = Math.min(3.5, rawScore * 0.5);
   }
 
   // 4. Adjust slightly for confidence (0.8 at minimum confidence, 1.0 at full)
   const confidenceFactor = 0.8 + 0.2 * Math.min(1.0, Math.max(0.0, confidence));
-  const adjustedScore = rawOverall * confidenceFactor;
+  let finalScore = rawScore * confidenceFactor;
 
-  // 5. Map to SeverityLevel
-  const level = toSeverityLevel(adjustedScore);
+  // 5. Add a small propagation penalty for deeper transitive dependencies
+  if (propagationDepth > 1) {
+    finalScore = Math.min(10.0, finalScore + Math.min(2.0, (propagationDepth - 1) * 0.15));
+  }
+
+  // 6. Map to SeverityLevel
+  const level = toSeverityLevel(finalScore);
 
   return {
-    score: Math.round(adjustedScore * 100) / 100,
+    score: Math.round(finalScore * 100) / 100,
     level,
-    impactScores: contextualScores,
+    impactScores: adjusted,
   };
 }
 
 export function toSeverityLevel(score: number): SeverityLevel {
-  if (score >= 9.0) return "CRITICAL";
-  if (score >= 7.0) return "HIGH";
+  if (score >= 8.0) return "CRITICAL";
+  if (score >= 6.0) return "HIGH";
   if (score >= 4.0) return "MEDIUM";
   return "LOW";
 }

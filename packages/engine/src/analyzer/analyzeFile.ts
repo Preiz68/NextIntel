@@ -7,7 +7,9 @@ import { extractExports } from "./extractExports.js";
 import { extractHooks } from "./extractHooks.js";
 import { extractFetchCalls } from "./extractFetch.js";
 import { extractBrowserAPIs } from "./extractBrowserApis.js";
+import { checkRenderPurity } from "./renderPurity.js";
 import type { FileAnalysis } from "./types.js";
+
 import { analyzeDirectTaints } from "../taint/taintEngine.js";
 import { ExecutionSimulator } from "../simulator/executionSimulator.js";
 import type { SemanticFileAnalysis } from "../classifier/types.js";
@@ -241,6 +243,15 @@ export async function analyzeFile(
   }
 
   const actionFindings = ExecutionSimulator.runASTActionChecks(sourceFile);
+  const purityFindings = checkRenderPurity(sourceFile);
+  const mappedPurityFindings = purityFindings.map((p) => ({
+    type: p.type === "nondeterminism" ? "hydration_nondeterminism" : "render_mutation",
+    severity: "HIGH" as const,
+    message: p.message,
+    line: p.line,
+    symbol: p.expression,
+  }));
+  const combinedFindings = [...actionFindings, ...mappedPurityFindings];
 
   const directTaints = analyzeDirectTaints(sourceFile);
   const initialTaintState: "CLEAN" | "TAINTED" | "CONDITIONALLY_TAINTED" = directTaints.some((t) => t.state === "TAINTED")
@@ -268,8 +279,10 @@ export async function analyzeFile(
     errors,
     taintState: initialTaintState,
     taints: directTaints,
-    simulationFindings: actionFindings,
+    symbolFlows: (directTaints as any).symbolFlows,
+    simulationFindings: combinedFindings,
   };
+
 
   // ── Apply Semantic Classification & Intelligence ─────────────────────────
 

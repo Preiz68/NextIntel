@@ -33,6 +33,7 @@ import { noServerApiInClientComponents } from "./rendering/no-server-api-in-clie
 import { noDynamicApisInStaticRoutes } from "./rendering/no-dynamic-apis-in-static-routes.js";
 import { noUseCacheInClientComponents } from "./rendering/no-use-cache-in-client-components.js";
 import { noInlineServerActionsInClientComponents } from "./rendering/no-inline-server-actions-in-client-components.js";
+import { reactRenderPurity } from "./rendering/react-render-purity.js";
 
 // ── Data Layer Rules ─────────────────────────────────────────────────────────
 import { fetchCacheConfig } from "./data/fetch-cache-config.js";
@@ -76,6 +77,7 @@ export const rules = [
   noDynamicApisInStaticRoutes,
   noUseCacheInClientComponents,
   noInlineServerActionsInClientComponents,
+  reactRenderPurity,
 
   // Data Layer
   fetchCacheConfig,
