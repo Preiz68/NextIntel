@@ -324,13 +324,6 @@ importers:
         version: 6.0.3
 
   vscode-extension:
-    dependencies:
-      engine:
-        specifier: workspace:*
-        version: link:../packages/engine
-      rules:
-        specifier: workspace:*
-        version: link:../packages/rules
     devDependencies:
       '@types/mocha':
         specifier: ^10.0.10
@@ -347,6 +340,9 @@ importers:
       '@vscode/test-electron':
         specifier: ^2.5.2
         version: 2.5.2
+      engine:
+        specifier: workspace:*
+        version: link:../packages/engine
       esbuild:
         specifier: ^0.28.0
         version: 0.28.0
@@ -356,6 +352,9 @@ importers:
       npm-run-all:
         specifier: ^4.1.5
         version: 4.1.5
+      rules:
+        specifier: workspace:*
+        version: link:../packages/rules
       typescript:
         specifier: ^6.0.3
         version: 6.0.3

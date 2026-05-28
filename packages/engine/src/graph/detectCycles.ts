@@ -4,6 +4,7 @@ import type { CycleReport } from "./types.js";
 type Color = "white" | "gray" | "black";
 
 export function detectCycles(graph: Graph): CycleReport {
+  if (!graph) return { hasCycles: false, cycles: [] };
   const colors = new Map<string, Color>();
   const cycles: string[][] = [];
 

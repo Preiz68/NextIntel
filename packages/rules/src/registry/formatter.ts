@@ -392,8 +392,8 @@ export function renderGroupedDiagnostics(diagnostics: Diagnostic[]): string {
     if (kind === "server-action" || filePath.toLowerCase().includes("action")) {
       serverActionExposure = 1.3;
     } else if (graph) {
-      const successors = graph.successors(filePath) || [];
-      const predecessors = graph.predecessors(filePath) || [];
+      const successors = graph?.successors(filePath) || [];
+      const predecessors = graph?.predecessors(filePath) || [];
       const isRelated = [...successors, ...predecessors].some(p => {
         const pNode = nodes?.get(p);
         return pNode?.semanticKind === "server-action" || p.toLowerCase().includes("action");

@@ -150,7 +150,7 @@ export function buildSemanticIR(
   while (queue.length > 0) {
     const curr = queue.shift()!;
     const currNode = semanticIR.get(curr)!;
-    const predecessors = graph.predecessors(curr) || [];
+    const predecessors = graph?.predecessors(curr) || [];
 
     for (const pred of predecessors) {
       const predNode = semanticIR.get(pred);

@@ -45,7 +45,7 @@ export const noDynamicApisInStaticRoutes: Rule = {
         if (curr === target) return true;
         if (visited.has(curr)) continue;
         visited.add(curr);
-        const successors = context.graph.successors(curr) || [];
+        const successors = context.graph?.successors(curr) || [];
         for (const succ of successors) {
           queue.push(succ);
         }
