@@ -83,11 +83,18 @@ export function extractFetchCalls(sourceFile: SourceFile): FetchCall[] {
     const args = call.getArguments();
     const optionsArg = args[1];
     const line = call.getStartLineNumber();
+    const sourceFile = call.getSourceFile();
+    const startLoc = sourceFile.getLineAndColumnAtPos(call.getStart());
+    const endLoc = sourceFile.getLineAndColumnAtPos(call.getEnd());
+    const column = startLoc.column - 1;
+    const endColumn = endLoc.column - 1;
 
     if (optionsArg && Node.isObjectLiteralExpression(optionsArg)) {
       results.push({
         ...analyzeOptionsObject(optionsArg),
         line,
+        column,
+        endColumn,
       });
     } else {
       // fetch(url) with no options — Next.js defaults to force-cache in App Router
@@ -98,6 +105,8 @@ export function extractFetchCalls(sourceFile: SourceFile): FetchCall[] {
         revalidateValue: null,
         isDynamic: false,
         line,
+        column,
+        endColumn,
       });
     }
   });

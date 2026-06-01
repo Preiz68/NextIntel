@@ -17,6 +17,38 @@ function isThirdParty(specifier: string): boolean {
   return true;
 }
 
+/**
+ * Packages that are known to be RSC-compatible: pure presentational components
+ * (icons, SVGs, layout utilities) with no hooks, browser APIs, or event listeners.
+ * These should never trigger wrap-third-party-components.
+ */
+const SAFE_RSC_PACKAGES = new Set([
+  "lucide-react",
+  "@heroicons/react",
+  "@heroicons/react/24/outline",
+  "@heroicons/react/24/solid",
+  "@heroicons/react/20/solid",
+  "react-icons",
+  "react-icons/ai", "react-icons/bi", "react-icons/bs", "react-icons/cg",
+  "react-icons/ci", "react-icons/di", "react-icons/fa", "react-icons/fa6",
+  "react-icons/fc", "react-icons/fi", "react-icons/gi", "react-icons/go",
+  "react-icons/gr", "react-icons/hi", "react-icons/hi2", "react-icons/im",
+  "react-icons/io", "react-icons/io5", "react-icons/lu", "react-icons/md",
+  "react-icons/pi", "react-icons/ri", "react-icons/rx", "react-icons/si",
+  "react-icons/sl", "react-icons/tb", "react-icons/ti", "react-icons/vsc",
+  "class-variance-authority",
+  "clsx",
+  "tailwind-merge",
+]);
+
+function isSafeForRSC(specifier: string): boolean {
+  if (SAFE_RSC_PACKAGES.has(specifier)) return true;
+  for (const safe of SAFE_RSC_PACKAGES) {
+    if (specifier.startsWith(safe + "/") || specifier.startsWith(safe + "#")) return true;
+  }
+  return false;
+}
+
 export const wrapThirdPartyComponents: Rule = {
   id: "wrap-third-party-components",
 
@@ -71,7 +103,7 @@ export const wrapThirdPartyComponents: Rule = {
                   i.namespaceImport === baseTagName,
               );
 
-              if (imp && isThirdParty(imp.moduleSpecifier)) {
+              if (imp && isThirdParty(imp.moduleSpecifier) && !isSafeForRSC(imp.moduleSpecifier)) {
                 const line = node.getStartLineNumber();
 
                 diagnostics.push(

@@ -112,9 +112,19 @@ export const noDynamicApisInStaticRoutes: Rule = {
           }
 
           if (dynamicUtil) {
+            let line = 1;
+            const utilBase = path.basename(dynamicUtil, path.extname(dynamicUtil));
+            const lines = content.split("\n");
+            for (let i = 0; i < lines.length; i++) {
+              if (lines[i]!.includes(utilBase) && (lines[i]!.includes("import") || lines[i]!.includes("require"))) {
+                line = i + 1;
+                break;
+              }
+            }
+
             diagnostics.push({
               file: filePath,
-              line: 1,
+              line,
               severity: isForceStatic ? "error" : "warning",
               ruleId: this.id,
               id: constraint?.id ?? "DYNAMIC_RENDER_TRIGGER-003",
@@ -136,10 +146,22 @@ export const noDynamicApisInStaticRoutes: Rule = {
           const isImported = context.analyses.some(a => isPageOrLayout(a.filePath) && canReach(a.filePath, filePath));
 
           if (!isImported) {
+            let line = 1;
+            try {
+              const fileContent = readFileSync(filePath, "utf-8");
+              const lines = fileContent.split("\n");
+              for (let i = 0; i < lines.length; i++) {
+                if (lines[i]!.includes("cookies(") || lines[i]!.includes("headers(")) {
+                  line = i + 1;
+                  break;
+                }
+              }
+            } catch {}
+
             // Case 3: isolated utility with headers() -> info severity / safe warning
             diagnostics.push({
               file: filePath,
-              line: 1,
+              line,
               severity: "info",
               ruleId: this.id,
               id: constraint?.id ?? "DYNAMIC_RENDER_TRIGGER-003",

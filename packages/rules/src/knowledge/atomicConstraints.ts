@@ -460,7 +460,9 @@ export function mapEventToDiagnostic(
   file: string,
   line: number | undefined,
   details: string,
-  isGuarded: boolean = false
+  isGuarded: boolean = false,
+  column?: number,
+  endColumn?: number
 ): Diagnostic {
   const constraint = ATOMIC_CONSTRAINTS[constraintId];
   if (!constraint) {
@@ -472,6 +474,8 @@ export function mapEventToDiagnostic(
   return {
     file,
     line,
+    column,
+    endColumn,
     severity: isGuarded ? "warning" : baseSeverity,
     ruleId,
     id: constraint.id,

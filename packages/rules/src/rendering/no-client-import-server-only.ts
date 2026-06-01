@@ -62,27 +62,25 @@ export const noClientImportServerOnly: Rule = {
 
         const nextHop = pathNodes[1] || target;
 
-        // Resolve the line where this import statement starts
+        // Resolve the line and column where this import statement starts from AST analysis
         let line = 1;
-        try {
-          const content = readFileSync(nodePath, "utf-8");
-          const lines = content.split("\n");
-          const targetBase = path
-            .basename(nextHop, path.extname(nextHop))
-            .replace(/^temp-/, "");
-          for (let i = 0; i < lines.length; i++) {
-            if (lines[i]!.includes(targetBase)) {
-              // Scan backwards to find the start of the import statement
-              let importLine = i;
-              while (importLine >= 0 && !lines[importLine]!.includes("import")) {
-                importLine--;
-              }
-              line = (importLine >= 0 ? importLine : i) + 1;
-              break;
-            }
+        let column: number | undefined;
+        let endColumn: number | undefined;
+
+        const fileAnalysis = context.analyses.find((a) => a.filePath === nodePath);
+        if (fileAnalysis) {
+          const targetBase = path.basename(nextHop, path.extname(nextHop)).replace(/^temp-/, "");
+          const imp = fileAnalysis.importDetails.find(
+            (i) =>
+              i.moduleSpecifier.includes(targetBase) ||
+              (i.defaultImport && i.defaultImport.includes(targetBase)) ||
+              i.namedImports.some((n) => n.includes(targetBase))
+          );
+          if (imp) {
+            line = imp.line ?? 1;
+            column = imp.column;
+            endColumn = imp.endColumn;
           }
-        } catch {
-          // ignore
         }
 
         const diag = mapEventToDiagnostic(
@@ -91,7 +89,10 @@ export const noClientImportServerOnly: Rule = {
           this.id,
           nodePath,
           line,
-          `Client Component '${nodePath}' imports Server Component/Module '${target}'.`
+          `Client Component '${nodePath}' imports Server Component/Module '${target}'.`,
+          false,
+          column,
+          endColumn
         );
         diag.safeRefactorSuggestion = `// Pass the Server Component as children or slot props to preserve Server boundaries:
 // 1. In the parent Server Component:

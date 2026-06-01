@@ -7,6 +7,8 @@ export interface SimulationFinding {
   severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
   message: string;
   line: number;
+  column?: number;
+  endColumn?: number;
   symbol?: string;
 }
 
@@ -68,13 +70,20 @@ function analyzeServerAction(
   });
 
   const line = actionNode.getStartLineNumber();
+  const sourceFile = actionNode.getSourceFile();
+  const startLoc = sourceFile.getLineAndColumnAtPos(actionNode.getStart());
+  const endLoc = sourceFile.getLineAndColumnAtPos(actionNode.getEnd());
+  const column = startLoc.column - 1;
+  const endColumn = endLoc.column - 1;
 
   if (!hasAuth) {
     findings.push({
       type: "action_missing_auth",
       severity: "CRITICAL",
       message: `Server Action is missing authentication gate check. Secure action endpoints by checking auth() first.`,
-      line
+      line,
+      column,
+      endColumn,
     });
   }
 
@@ -83,7 +92,9 @@ function analyzeServerAction(
       type: "action_missing_validation",
       severity: "CRITICAL",
       message: `Server Action is missing input schema validation. Run parse() or safeParse() on arguments.`,
-      line
+      line,
+      column,
+      endColumn,
     });
   }
 
@@ -108,6 +119,8 @@ export class ExecutionSimulator {
               ? `Browser global '${api.api}' is referenced in Server Component inside a runtime guard. It is conditionally executed but not safe under static analysis.`
               : `Browser global '${api.api}' is evaluated during server-side RSC render pass, causing runtime ReferenceError.`,
             line: api.line,
+            column: api.column,
+            endColumn: api.endColumn,
             symbol: api.api
           });
         });
@@ -126,6 +139,8 @@ export class ExecutionSimulator {
                 ? `Browser API '${api.api}' is read during top-level render of Client Component inside a runtime guard, which reduces but does not eliminate hydration risks.`
                 : `Browser API '${api.api}' is read during top-level render of Client Component, triggering a hydration mismatch.`,
               line: api.line,
+              column: api.column,
+              endColumn: api.endColumn,
               symbol: api.api
             });
           }
@@ -143,6 +158,8 @@ export class ExecutionSimulator {
               ? `Browser global '${api.api}' is referenced inside a Server Action within a runtime guard. It will not execute on the server but is a false-safe path.`
               : `Browser global '${api.api}' is referenced inside a Server Action, which runs exclusively on Node.js/Edge server runtimes.`,
             line: api.line,
+            column: api.column,
+            endColumn: api.endColumn,
             symbol: api.api
           });
         });

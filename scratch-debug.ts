@@ -3,47 +3,18 @@ import { RuleEngine, rules } from "./packages/rules/src/index.js";
 import path from "node:path";
 import fs from "node:fs";
 
-const clientUtilsCode = `
-"use client";
-
-import { useEffect, useState } from "react";
-
-export function getSessionFromBrowser() {
-  return localStorage.getItem(
-    "session"
-  );
-}
-
-export function logAnalyticsClientSide() {
-  navigator.sendBeacon(
-    "/analytics"
-  );
-}
-
-export function useMountedTheme() {
-  const [theme, setTheme] =
-    useState("light");
-
-  useEffect(() => {
-    setTheme(
-      localStorage.getItem("theme") ||
-        "light"
-    );
-  }, []);
-
-  return theme;
+const code = `
+"use server";
+export const getSimilarEventBySlug = async (slug: string) => {
+  return [];
 }
 `.trim();
 
-const filePath = path.resolve("./temp-client-utils.ts");
-fs.writeFileSync(filePath, clientUtilsCode, "utf8");
+const filePath = path.resolve("./action-temp.ts");
+fs.writeFileSync(filePath, code, "utf8");
 
 try {
-  const analysis = await analyzeFile(filePath, { fileContent: clientUtilsCode });
-  console.log("Analysis Semantic Kind:", analysis.semanticKind);
-  console.log("usesBrowserApis:", analysis.executionModel.usesBrowserApis);
-  console.log("browserAPIs:", JSON.stringify(analysis.browserAPIs, null, 2));
-
+  const analysis = await analyzeFile(filePath, { fileContent: code });
   const ruleEngine = new RuleEngine();
   for (const rule of rules) {
     ruleEngine.registerRule(rule);
@@ -56,11 +27,11 @@ try {
     edges: [],
   });
 
-  console.log("Diagnostics:", diagnostics);
+  console.log("\nDiagnostics returned:");
+  console.log(JSON.stringify(diagnostics, null, 2));
+
 } catch (e) {
   console.error(e);
 } finally {
-  if (fs.existsSync(filePath)) {
-    fs.unlinkSync(filePath);
-  }
+  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 }

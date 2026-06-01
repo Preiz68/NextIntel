@@ -74,6 +74,8 @@ export const noUnoptimizedFetch: Rule = {
         diagnostics.push({
           file: analysis.filePath,
           line: analysis.fetchCalls[0]?.line,
+          column: analysis.fetchCalls[0]?.column,
+          endColumn: analysis.fetchCalls[0]?.endColumn,
           severity: "warning",
           ruleId: this.id,
           id: dataConstraint?.id ?? "DF-001",

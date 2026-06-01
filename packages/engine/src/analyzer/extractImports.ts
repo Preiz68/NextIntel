@@ -11,6 +11,11 @@ export function extractImports(sourceFile: SourceFile): ImportInfo[] {
     const namespaceImport = decl.getNamespaceImport()?.getText() ?? null;
     const isTypeOnly = decl.isTypeOnly();
     const moduleSpecifier = decl.getModuleSpecifierValue();
+    const sourceFileObj = decl.getSourceFile();
+    const startLoc = sourceFileObj.getLineAndColumnAtPos(decl.getStart());
+    const endLoc = sourceFileObj.getLineAndColumnAtPos(decl.getEnd());
+    const column = startLoc.column - 1;
+    const endColumn = endLoc.column - 1;
 
     imports.push({
       moduleSpecifier,
@@ -18,6 +23,9 @@ export function extractImports(sourceFile: SourceFile): ImportInfo[] {
       defaultImport,
       namespaceImport,
       isTypeOnly,
+      line: decl.getStartLineNumber(),
+      column,
+      endColumn,
     });
   });
 
@@ -38,6 +46,11 @@ export function extractImports(sourceFile: SourceFile): ImportInfo[] {
     }
 
     const isTypeOnly = decl.isTypeOnly();
+    const sourceFileObj = decl.getSourceFile();
+    const startLoc = sourceFileObj.getLineAndColumnAtPos(decl.getStart());
+    const endLoc = sourceFileObj.getLineAndColumnAtPos(decl.getEnd());
+    const column = startLoc.column - 1;
+    const endColumn = endLoc.column - 1;
 
     imports.push({
       moduleSpecifier,
@@ -45,6 +58,9 @@ export function extractImports(sourceFile: SourceFile): ImportInfo[] {
       defaultImport,
       namespaceImport,
       isTypeOnly,
+      line: decl.getStartLineNumber(),
+      column,
+      endColumn,
     });
   });
 

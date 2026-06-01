@@ -25,7 +25,10 @@ export const noHooksInServerComponents: Rule = {
             this.id,
             analysis.filePath,
             hook.line,
-            `React hook '${hook.name}' is used in a Server Component.`
+            `React hook '${hook.name}' is used in a Server Component.`,
+            false,
+            hook.column,
+            hook.endColumn
           )
         );
       }

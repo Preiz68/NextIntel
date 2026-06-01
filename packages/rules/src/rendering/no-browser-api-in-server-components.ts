@@ -29,7 +29,9 @@ export const noBrowserApiInServerComponents: Rule = {
             analysis.filePath,
             leak.line,
             leak.message,
-            leak.severity === "LOW"
+            leak.severity === "LOW",
+            leak.column,
+            leak.endColumn
           )
         );
       }

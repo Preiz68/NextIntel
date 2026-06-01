@@ -180,6 +180,12 @@ export function extractBrowserAPIs(sourceFile: SourceFile): BrowserAPIUsage[] {
 
     // Get 1-based line number where the browser API identifier is used
     const line = id.getStartLineNumber();
+    const sourceFile = id.getSourceFile();
+    const startLoc = sourceFile.getLineAndColumnAtPos(id.getStart());
+    const endLoc = sourceFile.getLineAndColumnAtPos(id.getEnd());
+    const column = startLoc.column - 1;
+    const endColumn = endLoc.column - 1;
+
     const affectsRender = doesValueAffectRender(id);
     const isGuarded = isNodeConditionallyGuarded(id);
 
@@ -187,6 +193,8 @@ export function extractBrowserAPIs(sourceFile: SourceFile): BrowserAPIUsage[] {
       api: name,
       count: 1,
       line,
+      column,
+      endColumn,
       affectsRender,
       isGuarded,
     });

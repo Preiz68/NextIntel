@@ -39,6 +39,8 @@ export const fetchCacheConfig: Rule = {
         diagnostics.push({
           file: analysis.filePath,
           line: analysis.fetchCalls[0]?.line,
+          column: analysis.fetchCalls[0]?.column,
+          endColumn: analysis.fetchCalls[0]?.endColumn,
           severity: constraint?.severity ?? "warning",
           ruleId: this.id,
           id: constraint?.id ?? "DYNAMIC_RENDER_TRIGGER-001",

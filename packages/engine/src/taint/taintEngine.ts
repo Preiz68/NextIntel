@@ -1,5 +1,6 @@
 import { SourceFile, SyntaxKind, Node } from "ts-morph";
 import path from "node:path";
+import fs from "node:fs";
 
 export type TaintState = "CLEAN" | "TAINTED" | "CONDITIONALLY_TAINTED";
 
@@ -558,11 +559,14 @@ export class TaintEngine {
                   );
 
                   if (!hasTaint) {
+                    const matchedImport = importsFromB[0];
+                    const importLine = matchedImport && typeof matchedImport.line === "number" ? matchedImport.line : 1;
+
                     importerSummary.taints.push({
                       state: taint.state,
                       type: taint.type,
                       source: symbol,
-                      line: 1,
+                      line: importLine,
                       expression: `import from ${path.basename(curr)}`,
                       derived: true,
                       originFile: taint.originFile || curr
@@ -630,8 +634,22 @@ export class TaintEngine {
                 importerNode?.semanticKind === "client-util";
 
               if (taint.state === "TAINTED" || isClientContext) {
+                let importLine = 1;
+                try {
+                  const content = fs.readFileSync(importer, "utf8");
+                  const currBase = path.basename(curr, path.extname(curr));
+                  const lines = content.split("\n");
+                  for (let i = 0; i < lines.length; i++) {
+                    if (lines[i]!.includes(currBase) && (lines[i]!.includes("import") || lines[i]!.includes("require"))) {
+                      importLine = i + 1;
+                      break;
+                    }
+                  }
+                } catch {}
+
                 importerSummary.taints.push({
                   ...taint,
+                  line: importLine,
                   expression: `(propagated from ${path.basename(curr)}) ${taint.expression}`,
                   derived: true,
                   originFile: taint.originFile || curr

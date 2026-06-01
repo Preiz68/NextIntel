@@ -78,6 +78,73 @@ function isThirdParty(specifier: string): boolean {
   return true;
 }
 
+/**
+ * Packages that are known to be RSC-safe: they export pure presentational
+ * components (SVGs, icons, layout primitives) with no hooks, no browser APIs,
+ * and no event listeners. Importing them directly in a Server Component is
+ * perfectly valid and should never trigger wrap-third-party-components.
+ */
+const SAFE_RSC_PACKAGES = new Set([
+  // Icon libraries — pure SVG render components
+  "lucide-react",
+  "@heroicons/react",
+  "@heroicons/react/24/outline",
+  "@heroicons/react/24/solid",
+  "@heroicons/react/20/solid",
+  "react-icons",
+  "react-icons/ai",
+  "react-icons/bi",
+  "react-icons/bs",
+  "react-icons/cg",
+  "react-icons/ci",
+  "react-icons/di",
+  "react-icons/fa",
+  "react-icons/fa6",
+  "react-icons/fc",
+  "react-icons/fi",
+  "react-icons/gi",
+  "react-icons/go",
+  "react-icons/gr",
+  "react-icons/hi",
+  "react-icons/hi2",
+  "react-icons/im",
+  "react-icons/io",
+  "react-icons/io5",
+  "react-icons/lia",
+  "react-icons/lib",
+  "react-icons/lu",
+  "react-icons/md",
+  "react-icons/pi",
+  "react-icons/ri",
+  "react-icons/rx",
+  "react-icons/si",
+  "react-icons/sl",
+  "react-icons/tb",
+  "react-icons/tfi",
+  "react-icons/ti",
+  "react-icons/vsc",
+  "react-icons/wi",
+  // Utility / layout — no client-side interactivity
+  "class-variance-authority",
+  "clsx",
+  "tailwind-merge",
+]);
+
+/**
+ * Returns true when a package specifier is in the RSC-safe allowlist.
+ * Also handles scoped sub-paths, e.g. "lucide-react/dist/esm" still matches.
+ */
+function isSafeForRSC(specifier: string): boolean {
+  if (SAFE_RSC_PACKAGES.has(specifier)) return true;
+  // Check prefix match for sub-path imports (e.g. "@heroicons/react/24/outline/...")
+  for (const safe of SAFE_RSC_PACKAGES) {
+    if (specifier.startsWith(safe + "/") || specifier.startsWith(safe + "#")) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Node.js specific libraries that are incompatible with the Edge runtime
 const EDGE_INCOMPATIBLE_IMPORTS = [
   "fs",
@@ -584,6 +651,8 @@ export function buildExecutionModel(
   }
 
   // Third-Party Components (used directly in Server Components)
+  // Packages in SAFE_RSC_PACKAGES are RSC-compatible (pure SVG/presentational,
+  // no hooks, no browser APIs) and are explicitly excluded from this check.
   if (componentType === "server" && sourceFile) {
     let hasThirdPartyComponent = false;
     sourceFile.forEachDescendant((node) => {
@@ -597,12 +666,12 @@ export function buildExecutionModel(
             if (tagName.includes(".")) {
               baseTagName = tagName.split(".")[0];
             }
-            const imp = analysis.importDetails.find(i => 
-              i.namedImports.includes(baseTagName) || 
-              i.defaultImport === baseTagName || 
+            const imp = analysis.importDetails.find(i =>
+              i.namedImports.includes(baseTagName) ||
+              i.defaultImport === baseTagName ||
               i.namespaceImport === baseTagName
             );
-            if (imp && isThirdParty(imp.moduleSpecifier)) {
+            if (imp && isThirdParty(imp.moduleSpecifier) && !isSafeForRSC(imp.moduleSpecifier)) {
               hasThirdPartyComponent = true;
             }
           }

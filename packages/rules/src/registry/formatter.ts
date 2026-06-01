@@ -207,14 +207,14 @@ export function renderGroupedDiagnostics(diagnostics: Diagnostic[]): string {
       const ruleName = spec?.name ?? ruleId;
 
       // Print Violation header with confidence score
-      output += `\n  ${severityColor}[${levelStr}]\x1b[0m \x1b[1m${ruleId}: ${ruleName}${titleSuffix}\x1b[0m  (Confidence: ${(confidence * 100).toFixed(0)}% — ${mode})\n`;
+      output += `\n  ${severityColor}[${levelStr}]\x1b[0m \x1b[1m${ruleId}: ${ruleName}${titleSuffix}\x1b[0m  (Confidence: ${(confidence * 100).toFixed(0)}% — ${mode}) at ${group.file}:${targetLine}\n`;
 
       // Print Propagated Targets if any
       const firstDiag = ruleDiags[0];
       if (firstDiag && (firstDiag as any).propagatedTargets && (firstDiag as any).propagatedTargets.length > 0) {
         output += `    \x1b[33mPropagated to:\x1b[0m\n`;
         for (const target of (firstDiag as any).propagatedTargets) {
-          output += `      - ${target.file} (Line ${target.line})\n`;
+          output += `      - ${target.file}:${target.line}\n`;
         }
       }
 
@@ -226,7 +226,7 @@ export function renderGroupedDiagnostics(diagnostics: Diagnostic[]): string {
 
       const lineParts = lineDetails.map((ld) => {
         const filtered = ld.affects.filter((a) => a && a !== "unknown symbols");
-        return `Line ${ld.line}${filtered.length > 0 ? ` (${filtered.join(", ")})` : ""}`;
+        return `${group.file}:${ld.line}${filtered.length > 0 ? ` (${filtered.join(", ")})` : ""}`;
       });
       output += `    Location:          ${lineParts.length > 0 ? lineParts.join(", ") : "N/A"}\n`;
 

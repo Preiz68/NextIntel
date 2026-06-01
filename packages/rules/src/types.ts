@@ -166,6 +166,7 @@ export interface Diagnostic {
   file: string;
   line?: number;
   column?: number;
+  endColumn?: number;
 
   // ── Identity ──────────────────────────────────────────────────────────────
   severity: Severity;

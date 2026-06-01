@@ -26,12 +26,19 @@ export function extractHooks(sourceFile: SourceFile): HookUsage[] {
 
     // Calculate line number (1-indexed)
     const line = call.getStartLineNumber();
+    const sourceFile = call.getSourceFile();
+    const startLoc = sourceFile.getLineAndColumnAtPos(call.getStart());
+    const endLoc = sourceFile.getLineAndColumnAtPos(call.getEnd());
+    const column = startLoc.column - 1;
+    const endColumn = endLoc.column - 1;
 
     usages.push({
       name,
       isBuiltIn: ALL_BUILT_IN_HOOKS.has(name),
       isCustomHook: !ALL_BUILT_IN_HOOKS.has(name),
       line,
+      column,
+      endColumn,
     });
   });
 

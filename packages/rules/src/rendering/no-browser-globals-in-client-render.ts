@@ -28,7 +28,10 @@ export const noBrowserGlobalsInClientRender: Rule = {
             this.id,
             analysis.filePath,
             m.line,
-            m.message
+            m.message,
+            false,
+            m.column,
+            m.endColumn
           )
         );
       }

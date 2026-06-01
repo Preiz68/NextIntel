@@ -85,6 +85,8 @@ export interface BoundarySemantics {
 
 export interface EnhancedFetchCall {
   line: number;
+  column?: number;
+  endColumn?: number;
   url: string | "dynamic";
   cacheStrategy: "force-cache" | "no-store" | "revalidate" | "implicit-dynamic";
   revalidateValue?: number | string | null;

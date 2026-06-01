@@ -6,6 +6,9 @@ export interface ImportInfo {
   defaultImport: string | null;
   namespaceImport: string | null;
   isTypeOnly: boolean;
+  line?: number;
+  column?: number;
+  endColumn?: number;
 }
 
 export interface ExportInfo {
@@ -30,6 +33,8 @@ export interface FetchCall {
   revalidateValue: number | string | null;
   isDynamic: boolean;
   line: number;
+  column?: number;
+  endColumn?: number;
 }
 
 export interface HookUsage {
@@ -37,12 +42,16 @@ export interface HookUsage {
   isCustomHook: boolean;
   isBuiltIn: boolean;
   line: number;
+  column?: number;
+  endColumn?: number;
 }
 
 export interface BrowserAPIUsage {
   api: string;
   count: number;
   line: number;
+  column?: number;
+  endColumn?: number;
   affectsRender?: boolean;
   isGuarded?: boolean;
 }
