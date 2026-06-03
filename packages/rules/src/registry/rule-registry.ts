@@ -395,6 +395,42 @@ export const RULE_REGISTRY: Record<string, RuleSpec> = {
     detectionMode: "graph-inferred",
   },
 
+  "CC-HYDRATION-ABUSE-001": {
+    id: "CC-HYDRATION-ABUSE-001",
+    name: "Large static data import in Client Component",
+    category: "CLIENT_GRAPH_LEAK",
+    severityBase: 6,
+    phases: ["CLIENT_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "valid",
+      CLIENT_RENDER: "invalid",
+      HYDRATION: "invalid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
+    triggers: { patterns: [/import.*from\s+['"].*\.(json|csv)['"]/] },
+    boundary: "CLIENT_RENDER",
+    message: {
+      cause: "Client Component directly imports a data file (.json or .csv) that exceeds 50KB.",
+      impact: "The entire static dataset is bundled into the clientside JavaScript, bloating page size, slowing down parsing, and increasing React hydration time.",
+      ruleExplanation: "Client bundle sizes should be minimized. Large static datasets should remain server-side and be passed as prop subsets or fetched dynamically.",
+    },
+    fix: {
+      primary: "Move the import to a Server Component parent and pass only required fields as props.",
+      confidence: "HIGH",
+      confidenceReason: "Separates server data from client rendering, preventing bundle bloat.",
+      architecture: "Keep Client Components focused on user interaction, holding zero heavy static data payloads.",
+      alternatives: [
+        "Create an API Route and load the data on demand via fetch().",
+        "Move the data to the public/ folder and load it dynamically.",
+      ],
+    },
+    severity: "HIGH",
+    kind: "performance",
+    confidence: 1.0,
+    detectionMode: "deterministic",
+  },
+
   "CC-SERVER-IMPORT-001": {
     id: "CC-SERVER-IMPORT-001",
     name: "Server Component imported in Client Component",
@@ -827,38 +863,6 @@ export const RULE_REGISTRY: Record<string, RuleSpec> = {
 
   // ── Caching/Taxonomy specific rules ────────────────────────────────────────
 
-  "DYNAMIC_RENDER_TRIGGER-001": {
-    id: "DYNAMIC_RENDER_TRIGGER-001",
-    name: "Implicit fetch caching configuration",
-    category: "DYNAMIC_RENDER_TRIGGER",
-    severityBase: 5,
-    phases: ["RSC_RENDER"],
-    phaseCorrectness: {
-      RSC_RENDER: "invalid",
-      CLIENT_RENDER: "valid",
-      HYDRATION: "valid",
-      SERVER_ACTION: "valid",
-      BUNDLER_RESOLUTION: "valid",
-    },
-    triggers: {
-      imports: [],
-    },
-    boundary: "RSC_RENDER",
-    message: {
-      cause: "fetch() call inside Server Component runs without explicit cache or revalidate options.",
-      impact: "Uses Next.js runtime defaults which might lead to unexpected dynamic render escalation or stale cache data.",
-      ruleExplanation: "Modern Next.js models do not cache fetches by default. Explicit cache settings avoid performance degradation.",
-    },
-    fix: {
-      primary: "Add { cache: 'force-cache' } or { next: { revalidate: ... } } to explicit caching targets.",
-      confidence: "HIGH",
-    },
-    severity: "MEDIUM",
-    kind: "cache",
-    confidence: 0.90,
-    detectionMode: "deterministic",
-  },
-
   "DYNAMIC_RENDER_TRIGGER-003": {
     id: "DYNAMIC_RENDER_TRIGGER-003",
     name: "Dynamic API called in static route/layout segment",
@@ -994,15 +998,1042 @@ export const RULE_REGISTRY: Record<string, RuleSpec> = {
     confidence: 0.90,
     detectionMode: "deterministic",
   },
+
+  // ── Data Fetching rules ────────────────────────────────────────────────────
+
+  "DF-001": {
+    id: "DF-001",
+    name: "Explicit Fetch Cache Strategy Missing",
+    category: "DYNAMIC_RENDER_TRIGGER",
+    severityBase: 6,
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
+    triggers: { patterns: [/\bfetch\(/] },
+    boundary: "RSC_RENDER",
+    message: {
+      cause: "A fetch() call in a Server Component or Server Action uses no explicit cache or revalidation strategy.",
+      impact: "Next.js cannot determine whether to cache the response, falling back to per-request dynamic behavior and bypassing the Data Cache entirely.",
+      ruleExplanation: "In Next.js 15+, fetch() calls are opt-out of caching by default. Without { cache: 'force-cache' } or { next: { revalidate: N } }, every render triggers a live network request, eliminating the performance benefits of the Data Cache.",
+    },
+    fix: {
+      primary: "Add an explicit cache policy: fetch(url, { cache: 'force-cache' }) for static data, or fetch(url, { next: { revalidate: 60 } }) for ISR.",
+      confidence: "HIGH",
+      confidenceReason: "Documented Next.js Data Cache configuration — explicit options are required for predictable caching behavior.",
+      architecture: "Define a caching tier per data source: static (force-cache), time-based (revalidate: N), or per-request (no-store). Apply consistently at the data access layer.",
+      alternatives: [
+        "Use React.cache() on the fetching function for request-level deduplication without persistent caching",
+        "Use { cache: 'no-store' } explicitly for truly dynamic data to make the intent clear",
+      ],
+    },
+    severity: "MEDIUM",
+    kind: "cache",
+    confidence: 0.85,
+    detectionMode: "heuristic",
+  },
+
+  "DF-002": {
+    id: "DF-002",
+    name: "Database function not wrapped in React.cache()",
+    category: "DYNAMIC_RENDER_TRIGGER",
+    severityBase: 5,
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
+    triggers: { patterns: [/\bdb\.\w+|\bprisma\.\w+|\bdrizzle\.\w+/] },
+    boundary: "RSC_RENDER",
+    message: {
+      cause: "An exported data access function performs ORM/database queries but is not wrapped in React.cache(), causing duplicate queries when called from multiple components.",
+      impact: "Multiple React components calling the same data function within one render pass each trigger an independent database query. React.cache() deduplicates these automatically within a single request lifecycle.",
+      ruleExplanation: "Unlike fetch(), ORM queries (Prisma, Drizzle, Mongoose) receive no automatic request deduplication. React.cache() provides per-request memoization that eliminates duplicate queries across the entire server render tree.",
+    },
+    fix: {
+      primary: "Wrap the function: import { cache } from 'react'; export const getUser = cache(async (id: string) => { return db.user.findUnique({ where: { id } }); });",
+      confidence: "HIGH",
+      confidenceReason: "Standard Next.js Data Access Layer pattern — officially recommended in the App Router docs for ORM deduplication.",
+      architecture: "Build a Data Access Layer (lib/dal.ts) where every exported async function is wrapped in React.cache(). This layer is the single source of truth for data access across all Server Components.",
+    },
+    severity: "MEDIUM",
+    kind: "performance",
+    confidence: 0.90,
+    detectionMode: "heuristic",
+  },
+
+  "DF-003": {
+    id: "DF-003",
+    name: "Server Component calling internal API Route",
+    category: "RSC_API_VIOLATION",
+    severityBase: 8,
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
+    triggers: { patterns: [/fetch\(['"]\/api\//] },
+    boundary: "RSC_RENDER",
+    message: {
+      cause: "A Server Component fetches data from an internal /api/ Route Handler via an HTTP loopback request rather than calling the data access function directly.",
+      impact: "Creates an unnecessary full HTTP roundtrip: Server Component → network → Route Handler → database. This adds network latency, bypasses the Data Cache, and increases server load with a loopback TCP connection.",
+      ruleExplanation: "Server Components can import and call data access functions directly — no network layer is needed. Internal API routes exist for Client Components and external consumers, not for Server-to-Server communication.",
+    },
+    fix: {
+      primary: "Import and call the underlying data function directly instead of fetching the Route Handler: import { getUsers } from '@/lib/dal'; const users = await getUsers();",
+      confidence: "HIGH",
+      confidenceReason: "Eliminates the network loopback entirely — Server Components have direct module access to all server-side code.",
+      architecture: "Route Handlers serve external and client-side consumers. For server-to-server data access, always call the data layer directly.",
+    },
+    severity: "HIGH",
+    kind: "architecture",
+    confidence: 1.0,
+    detectionMode: "deterministic",
+  },
+
+  "DF-004": {
+    id: "DF-004",
+    name: "Uncached database query in Server Component",
+    category: "DYNAMIC_RENDER_TRIGGER",
+    severityBase: 6,
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
+    triggers: { patterns: [/\bdb\.\w+|\bprisma\.\w+/] },
+    boundary: "RSC_RENDER",
+    message: {
+      cause: "A Server Component queries the database directly without any caching layer ('use cache', unstable_cache, or React.cache()).",
+      impact: "Every page render triggers a live database query. Under traffic, this removes all caching benefits and increases database load proportional to request volume.",
+      ruleExplanation: "Database queries in Server Components bypass Next.js's Data Cache unless explicitly wrapped. The 'use cache' directive or React.cache() provides request-level and multi-request caching respectively.",
+    },
+    fix: {
+      primary: "Wrap the database call in a cached function using React.cache() or Next.js 'use cache' directive for persistent cross-request caching.",
+      confidence: "MEDIUM",
+      confidenceReason: "Caching strategy depends on data freshness requirements — correct approach but requires contextual judgment.",
+      architecture: "Separate data access from rendering: queries live in a cached DAL layer; Server Components consume cached results.",
+    },
+    severity: "MEDIUM",
+    kind: "cache",
+    confidence: 0.85,
+    detectionMode: "heuristic",
+  },
+
+  "DF-005": {
+    id: "DF-005",
+    name: "Sequential fetch waterfall in Server Component",
+    category: "DYNAMIC_RENDER_TRIGGER",
+    severityBase: 7,
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
+    triggers: { patterns: [/await\s+\w+\(/] },
+    boundary: "RSC_RENDER",
+    message: {
+      cause: "Multiple independent data fetches are awaited sequentially inside a Server Component, each blocking the next from starting.",
+      impact: "Total fetch time equals the sum of all individual fetch times. With Promise.all(), independent fetches run concurrently and total time equals the slowest single fetch.",
+      ruleExplanation: "JavaScript's event loop allows initiating multiple async operations before awaiting any of them. Sequential awaiting of independent fetches eliminates concurrency and compounds latency.",
+    },
+    fix: {
+      primary: "Replace sequential awaits with parallel execution: const [users, posts] = await Promise.all([getUsers(), getPosts()]);",
+      confidence: "HIGH",
+      confidenceReason: "Deterministic optimization — Promise.all() is always correct for independent data dependencies.",
+      architecture: "Establish a convention: at the top of every Server Component, declare all independent data dependencies in a single Promise.all() call before any conditional logic.",
+      alternatives: [
+        "Use the preload pattern: call the async function without awaiting to start the fetch early, then await it later when the result is needed",
+      ],
+    },
+    severity: "HIGH",
+    kind: "performance",
+    confidence: 0.90,
+    detectionMode: "heuristic",
+  },
+
+  "DF-006": {
+    id: "DF-006",
+    name: "Duplicate data function called multiple times in one render",
+    category: "DYNAMIC_RENDER_TRIGGER",
+    severityBase: 5,
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
+    triggers: { patterns: [/await\s+\w+\(/] },
+    boundary: "RSC_RENDER",
+    message: {
+      cause: "The same data-fetching function is called more than once within a single Server Component render pass, issuing redundant database queries.",
+      impact: "Each duplicate call triggers an independent database roundtrip. N calls = N queries. React.cache() on the source function collapses all calls to a single in-memory result per request.",
+      ruleExplanation: "Unlike fetch() which is automatically deduplicated by React for identical URLs, ORM and custom async functions receive no automatic memoization. React.cache() must be applied explicitly at the function declaration.",
+    },
+    fix: {
+      primary: "Wrap the source function with React.cache(): import { cache } from 'react'; export const getRevenue = cache(async () => { ... });",
+      confidence: "HIGH",
+      confidenceReason: "React.cache() is the official Next.js mechanism for request-scoped memoization of server functions.",
+      architecture: "Data Access Layer rule: every exported async data function must be wrapped in React.cache() at the point of declaration. Callers are then free to call it as many times as needed.",
+    },
+    severity: "MEDIUM",
+    kind: "performance",
+    confidence: 1.0,
+    detectionMode: "deterministic",
+  },
+
+  "DF-007": {
+    id: "DF-007",
+    name: "Client Component re-fetching server-available data",
+    category: "CLIENT_GRAPH_LEAK",
+    severityBase: 9,
+    phases: ["CLIENT_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "valid",
+      CLIENT_RENDER: "invalid",
+      HYDRATION: "invalid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
+    triggers: { patterns: [/fetch\(['"]\/api\//] },
+    boundary: "CLIENT_RENDER",
+    message: {
+      cause: "A Client Component fetches data via a client-side HTTP request when the same data is already available from a parent Server Component that could pass it as props.",
+      impact: "Double network cost: the data is fetched server-side during SSR, then fetched again client-side after hydration. Users see a loading state for data that could have been pre-rendered.",
+      ruleExplanation: "Server Components own data. When a Server Component already has the data, it should serialize it into the RSC payload and pass it as props to Client Components — zero additional network cost.",
+    },
+    fix: {
+      primary: "Remove the client-side fetch and accept the data as a prop: // Server: const data = await getData(); <ClientComponent data={data} /> // Client: function ClientComponent({ data }) { ... }",
+      confidence: "HIGH",
+      confidenceReason: "Eliminates the client-server roundtrip for data already available at render time.",
+      architecture: "Architectural rule: Server Components own data acquisition. Client Components display data. Props are the handoff mechanism — never a re-fetch.",
+      alternatives: [
+        "If real-time updates are required, use SWR with an initial data prop: useSWR(key, fetcher, { fallbackData: serverData })",
+      ],
+    },
+    severity: "CRITICAL",
+    kind: "architecture",
+    confidence: 0.85,
+    detectionMode: "graph-inferred",
+  },
+
+  "DF-009": {
+    id: "DF-009",
+    name: "generateMetadata Duplicate Fetches",
+    category: "DYNAMIC_RENDER_TRIGGER",
+    severityBase: 4,
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
+    triggers: { patterns: [/generateMetadata/] },
+    boundary: "RSC_RENDER",
+    message: {
+      cause: "Duplicate fetch() call detected between generateMetadata() and the Page component render function.",
+      impact: "Triggers redundant network calls or maintenance overhead. In Next.js, deduplicating fetches using cache() or shared fetchers is a cleaner and safer pattern.",
+      ruleExplanation: "Even though Next.js automatically dedupes GET requests, cache settings (like cache: 'no-store') or custom query configurations can bypass this, triggering redundant requests.",
+    },
+    fix: {
+      primary: "Wrap the fetch or data acquisition logic in React.cache() or use a shared fetcher function.",
+      confidence: "HIGH",
+      confidenceReason: "Guarantees a single promise is shared between metadata extraction and rendering.",
+      architecture: "Deduplicate data fetchers in a Data Access Layer using standard React and Next.js caching methods.",
+      alternatives: [
+        "Rely on Next.js automatic fetch deduplication for simple GET requests.",
+      ],
+    },
+    severity: "LOW",
+    kind: "performance",
+    confidence: 1.0,
+    detectionMode: "deterministic",
+  },
+
+  "DF-010": {
+    id: "DF-010",
+    name: "Cross-Route Duplicate Fetches",
+    category: "DYNAMIC_RENDER_TRIGGER",
+    severityBase: 5,
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
+    triggers: { patterns: [/fetch/] },
+    boundary: "RSC_RENDER",
+    message: {
+      cause: "Duplicate fetch() call targeting the same endpoint detected across parent layout and nested child routes.",
+      impact: "Triggers redundant network requests and increased server load.",
+      ruleExplanation: "Layouts and child routes execute during the same request lifecycle. Duplicate fetches without request-level caching double the data rendering cost.",
+    },
+    fix: {
+      primary: "Wrap the shared fetch/query in React.cache() inside a shared data access layer module.",
+      confidence: "HIGH",
+      confidenceReason: "Shared React.cache() guarantees a single promise is resolved across different route files in the same request path.",
+      architecture: "Centralize data fetching utilities in a shared data layer with memoization wrapper.",
+      alternatives: [
+        "Use Next.js automatic fetch deduplication for simple GET requests.",
+      ],
+    },
+    severity: "MEDIUM",
+    kind: "performance",
+    confidence: 1.0,
+    detectionMode: "deterministic",
+  },
+
+  "MD-002": {
+    id: "MD-002",
+    name: "Avoid Fetch Duplication Inside Dynamic generateMetadata and Pages",
+    category: "DYNAMIC_RENDER_TRIGGER",
+    severityBase: 5,
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
+    triggers: { patterns: [/generateMetadata/] },
+    boundary: "RSC_RENDER",
+    message: {
+      cause: "Fetching the same dataset twice (once in generateMetadata and once in page.tsx) using uncached non-fetch drivers (like standard ORM queries) causes database request waterfalls.",
+      impact: "Each duplicate call triggers an independent database/API roundtrip. In Next.js, wrap the source function with React.cache() to deduplicate data fetching during request lifecycle.",
+      ruleExplanation: "Next.js automatically deduplicates fetch() requests with the same signature. However, if you are querying databases directly (e.g. using Prisma, Mongoose, or raw pg sockets) inside generateMetadata() and again inside page.tsx, these queries are not cached by default. This causes twice the database load per page view.",
+    },
+    fix: {
+      primary: "Wrap the database/fetch query function with React.cache: const getCachedItem = cache(async (id) => { return db.getItem(id); })",
+      confidence: "HIGH",
+      confidenceReason: "React.cache() is the official Next.js mechanism for request-scoped memoization of custom server queries.",
+      architecture: "Establish a cached Data Access Layer (DAL) consumed by both metadata resolvers and render pages.",
+      alternatives: [
+        "Use Next.js fetch() with standard caching configuration for data API endpoints.",
+      ],
+    },
+    severity: "MEDIUM",
+    kind: "performance",
+    confidence: 1.0,
+    detectionMode: "deterministic",
+  },
+
+  // ── Routing rules ──────────────────────────────────────────────────────────
+
+  "RO-001": {
+    id: "RO-001",
+    name: "Non-routing file co-located in route segment",
+    category: "RSC_API_VIOLATION",
+    severityBase: 4,
+    phases: ["BUNDLER_RESOLUTION"],
+    phaseCorrectness: {
+      RSC_RENDER: "valid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "invalid",
+    },
+    triggers: { nodeType: ["SourceFile"] },
+    boundary: "BUNDLER_RESOLUTION",
+    message: {
+      cause: "A non-routing file (utility, component, helper) is placed directly inside a route segment folder that contains a page.tsx or layout.tsx.",
+      impact: "Risk of accidental route exposure if the file is misnamed, bundler confusion during tree-shaking, and organizational debt that grows as the app scales.",
+      ruleExplanation: "Next.js App Router treats every folder containing a page.tsx as a publicly addressable URL segment. Non-routing files in these folders are technically safe if correctly named, but create maintenance risks and violate the principle that route segment folders should contain only routing-relevant files.",
+    },
+    fix: {
+      primary: "Move utility files to an organizational folder outside the routing tree (app/components/, app/lib/, app/shared/) or into a private folder prefixed with underscore (_components/).",
+      confidence: "MEDIUM",
+      confidenceReason: "Correct architectural direction but requires reorganizing file structure — a mechanical refactor.",
+      architecture: "Keep route segment folders lean: only page.tsx, layout.tsx, loading.tsx, error.tsx, and other Next.js routing files. All other code lives in dedicated organizational folders.",
+    },
+    severity: "LOW",
+    kind: "architecture",
+    confidence: 1.0,
+    detectionMode: "deterministic",
+  },
+
+  "RO-002": {
+    id: "RO-002",
+    name: "route.ts and page.tsx co-located in same segment",
+    category: "RSC_API_VIOLATION",
+    severityBase: 9,
+    phases: ["BUNDLER_RESOLUTION"],
+    phaseCorrectness: {
+      RSC_RENDER: "valid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "invalid",
+    },
+    triggers: { nodeType: ["SourceFile"] },
+    boundary: "BUNDLER_RESOLUTION",
+    message: {
+      cause: "A route.ts (HTTP handler) and page.tsx (React Server Component) coexist in the same route segment directory.",
+      impact: "Next.js build compilation error — the framework cannot determine whether to serve this segment as a JSON API endpoint or a rendered HTML page.",
+      ruleExplanation: "route.ts configures a segment as a raw HTTP handler (GET, POST, etc.). page.tsx configures it as a React render target. These are mutually exclusive — Next.js will throw during build if both exist.",
+    },
+    fix: {
+      primary: "Move the route.ts to a dedicated API segment: app/api/resource/route.ts, keeping page.tsx at app/resource/page.tsx.",
+      confidence: "HIGH",
+      confidenceReason: "Deterministic fix — the two file types are mutually exclusive in any single route segment.",
+      architecture: "Separate API routes into app/api/... and page routes into their own segments. Use Server Actions for mutations instead of co-locating API handlers near pages.",
+    },
+    severity: "CRITICAL",
+    kind: "architecture",
+    confidence: 1.0,
+    detectionMode: "deterministic",
+  },
+
+  "RO-003": {
+    id: "RO-003",
+    name: "Parallel route slot missing default.tsx fallback",
+    category: "RSC_API_VIOLATION",
+    severityBase: 8,
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
+    triggers: { nodeType: ["SourceFile"] },
+    boundary: "RSC_RENDER",
+    message: {
+      cause: "A parallel route slot folder (@slot) contains a page.tsx but no default.tsx fallback file.",
+      impact: "404 error on full page reload — Next.js cannot restore the slot's state and has no fallback to render in its place.",
+      ruleExplanation: "On browser reload, Next.js cannot reconstruct the client-side slot state. Without a default.tsx fallback, the slot has nothing to render and the entire layout returns a 404. This is a hard requirement for parallel routes in production.",
+    },
+    fix: {
+      primary: "Create a default.tsx file in the @slot directory that returns null or a structural skeleton component.",
+      confidence: "HIGH",
+      confidenceReason: "Mandatory Next.js requirement — officially documented as a hard constraint for parallel routes.",
+      architecture: "Every parallel route slot must ship as a complete set: page.tsx (the content) + default.tsx (the fallback) + optional loading.tsx and error.tsx.",
+    },
+    severity: "HIGH",
+    kind: "architecture",
+    confidence: 1.0,
+    detectionMode: "deterministic",
+  },
+
+  "RO-004": {
+    id: "RO-004",
+    name: "Intercepting route missing sibling @slot",
+    category: "RSC_API_VIOLATION",
+    severityBase: 7,
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
+    triggers: { patterns: [/\(\.\)|\(\.\.\)|\(\.\.\.\)/] },
+    boundary: "RSC_RENDER",
+    message: {
+      cause: "An intercepting route segment ((.), (..), or (...)) exists without a matching sibling @slot parallel route in the parent layout.",
+      impact: "Silent fallback to full page navigation — the intercepted content has no parallel slot to render into, so Next.js ignores the interception and performs a standard route change.",
+      ruleExplanation: "Intercepting routes depend on a sibling parallel route slot (@modal, @drawer, etc.) to render the intercepted content alongside the current page. Without the slot, the interception has no render target and fails silently.",
+    },
+    fix: {
+      primary: "Create a sibling @modal (or @drawer) folder at the same layout level with page.tsx and default.tsx. Update the parent layout.tsx to accept and render the slot.",
+      confidence: "HIGH",
+      confidenceReason: "Required structural pattern — intercepting routes are non-functional without a matching parallel slot.",
+      architecture: "Intercepting route structure: parent-layout/@modal/default.tsx + parent-layout/(.)target/page.tsx + parent-layout/layout.tsx with { children, modal } props.",
+      alternatives: [
+        "If modal behavior is not needed, remove the intercepting route convention and use standard navigation instead",
+      ],
+    },
+    severity: "HIGH",
+    kind: "architecture",
+    confidence: 1.0,
+    detectionMode: "deterministic",
+  },
+
+  "RO-005": {
+    id: "RO-005",
+    name: "Streaming Opportunity: Wrap data fetch in Suspense boundary",
+    category: "DYNAMIC_RENDER_TRIGGER",
+    severityBase: 3,
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "valid", // change render correctness to valid as it is not a correct violation
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
+    triggers: { patterns: [/export\s+default\s+async\s+function/] },
+    boundary: "Streaming Opportunity",
+    message: {
+      cause: "An async page or layout awaits data directly in its render body. Wrapping data-dependent output in a Suspense boundary allows progressive streaming.",
+      impact: "Streaming is optional. If the page contains independently loadable sections, streaming the shell first can improve perceived performance and TTFB.",
+      ruleExplanation: "Next.js supports HTML streaming — the page shell can be sent to the browser immediately while data loads in the background. Suspense boundaries define independent streaming chunks. Without them, the page render is waterfall-sequential from the server's perspective.",
+    },
+    fix: {
+      primary: "Extract the data-fetching section into a child async component and wrap it: <Suspense fallback={<Skeleton />}><DataComponent /></Suspense>",
+      confidence: "HIGH",
+      confidenceReason: "Standard Next.js streaming pattern — officially documented as the mechanism for enabling incremental HTML delivery.",
+      architecture: "Streaming page architecture: page.tsx renders a static shell instantly. Each independent data source is a separate async child component wrapped in its own Suspense boundary, streaming content as data resolves.",
+      alternatives: [
+        "Use loading.tsx as a route-level Suspense boundary for the entire page",
+        "Use dynamic() with loading UI for component-level streaming",
+      ],
+    },
+    severity: "LOW",
+    kind: "performance",
+    confidence: 1.0,
+    detectionMode: "deterministic",
+  },
+
+  "RO-006": {
+    id: "RO-006",
+    name: "Layout Await Blocks Rendering",
+    category: "DYNAMIC_RENDER_TRIGGER",
+    severityBase: 6,
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
+    triggers: { patterns: [/export\s+default\s+async\s+function/] },
+    boundary: "RSC_RENDER",
+    message: {
+      cause: "An async layout component awaits data directly in its render body, blocking child component execution.",
+      impact: "React cannot render any child pages or nested layouts until the layout's fetches resolve. This completely disables parallel streaming and degrades page performance.",
+      ruleExplanation: "Layouts wrap entire page subtrees. Blocking layout execution stalls page shell delivery and child component mount phases.",
+    },
+    fix: {
+      primary: "Move the async data-fetching logic into a separate async component and render it inside layout wrapped in <Suspense>.",
+      confidence: "HIGH",
+      confidenceReason: "Official Next.js recommendation to keep layout components light and delegate data fetching to Suspense boundaries.",
+      architecture: "Layout components should act as static shell hosts, loading instantly without network blocks.",
+      alternatives: [
+        "Use loading.tsx for route-level fallback UI",
+      ],
+    },
+    severity: "HIGH",
+    kind: "performance",
+    confidence: 1.0,
+    detectionMode: "deterministic",
+  },
+
+  "LAYOUT_AUTH_GATE": {
+    id: "LAYOUT_AUTH_GATE",
+    name: "Expected Authentication Boundary",
+    category: "DYNAMIC_RENDER_TRIGGER",
+    severityBase: 3,
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "valid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
+    triggers: { patterns: [/export\s+default\s+async\s+function/] },
+    boundary: "RSC_RENDER",
+    message: {
+      cause: "Layout blocks rendering to resolve user authentication, session, or tenant constraints.",
+      impact: "This is a standard design pattern for route-level guards where children should not mount until authorization resolves.",
+      ruleExplanation: "Awaiting authentication, session, or redirect APIs inside layout files acts as a route gate, which is intentional and expected.",
+    },
+    fix: {
+      primary: "No changes needed. Confirm auth gating is required at the layout boundary.",
+      confidence: "HIGH",
+      confidenceReason: "Intentional await of auth methods blocks rendering to enforce security boundaries.",
+      architecture: "Expected Auth Gate pattern ensures pages are protected before mounting.",
+      alternatives: [],
+    },
+    severity: "LOW",
+    kind: "performance",
+    confidence: 1.0,
+    detectionMode: "deterministic",
+  },
+
+  "RO-007": {
+    id: "RO-007",
+    name: "Sequential Async Waterfall",
+    category: "DYNAMIC_RENDER_TRIGGER",
+    severityBase: 6,
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
+    triggers: { patterns: [/\bawait\b/] },
+    boundary: "RSC_RENDER",
+    message: {
+      cause: "Multiple independent fetches or async functions are awaited sequentially instead of in parallel.",
+      impact: "Each awaited promise blocks the next one, resulting in a cumulative execution latency waterfall. This extends TTFB and overall page load time.",
+      ruleExplanation: "Awaiting independent operations one by one forces serial resolution. Using Promise.all() parallelizes request resolution.",
+    },
+    fix: {
+      primary: "Combine independent awaits with Promise.all() or Promise.allSettled(): const [resA, resB] = await Promise.all([fetchA(), fetchB()]);",
+      confidence: "HIGH",
+      confidenceReason: "Official Next.js and React recommendations to use parallel data fetching for independent requests.",
+      architecture: "Parallel data fetching leverages concurrent processing, minimizing overall request latency.",
+      alternatives: [
+        "Prefetch data in separate child components, each wrapped in its own Suspense boundary.",
+      ],
+    },
+    severity: "HIGH",
+    kind: "performance",
+    confidence: 1.0,
+    detectionMode: "deterministic",
+  },
+
+
+  // ── Cache rules ─────────────────────────────────────────────────────────────
+
+  "CA-006": {
+    id: "CA-006",
+    name: "Cache tag declared but never revalidated",
+    category: "DYNAMIC_RENDER_TRIGGER",
+    severityBase: 6,
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
+    triggers: { patterns: [/next\.tags/] },
+    boundary: "RSC_RENDER",
+    message: {
+      cause: "A cache tag is applied to a fetch() call using next.tags, but revalidateTag() is never called with that tag anywhere in the project.",
+      impact: "The cached data can never be surgically invalidated after mutations. It will remain stale until the revalidate interval expires or the app is redeployed.",
+      ruleExplanation: "Cache tags are inert without a corresponding revalidateTag() call. A tag without an invalidation path is dead infrastructure — the cache will retain stale data indefinitely regardless of database changes.",
+    },
+    fix: {
+      primary: "Add revalidateTag('tag-name') to the Server Action that mutates the data this tag covers.",
+      confidence: "HIGH",
+      confidenceReason: "Structural requirement — on-demand revalidation requires a paired tag declaration and revalidateTag() call.",
+      architecture: "Adopt a tag-per-entity convention: declare a canonical tag constant and use it symmetrically in the data fetch (next.tags) and in the mutation (revalidateTag). One source of truth for the tag value.",
+      alternatives: [
+        "Use next: { revalidate: N } instead if time-based expiry is acceptable for this data",
+      ],
+    },
+    severity: "MEDIUM",
+    kind: "cache",
+    confidence: 0.90,
+    detectionMode: "graph-inferred",
+  },
+
+  "CA-007": {
+    id: "CA-007",
+    name: "Broad cache invalidation after single-entity mutation",
+    category: "DYNAMIC_RENDER_TRIGGER",
+    severityBase: 6,
+    phases: ["SERVER_ACTION"],
+    phaseCorrectness: {
+      RSC_RENDER: "valid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "invalid",
+      BUNDLER_RESOLUTION: "valid",
+    },
+    triggers: { patterns: [/revalidatePath\(['"]\/['"]\)/] },
+    boundary: "RSC_RENDER",
+    message: {
+      cause: "revalidatePath('/') is called after a single-entity mutation, purging the entire route cache tree when only one entity changed.",
+      impact: "Under high traffic, all cached routes become stale simultaneously, causing a cache stampede: every route must re-render on the next request, spiking server CPU and response times.",
+      ruleExplanation: "revalidatePath('/') is equivalent to 'clear everything'. For a single record update, the scope of invalidation should match the scope of the change — one entity → one cache tag, not the entire route tree.",
+    },
+    fix: {
+      primary: "Replace revalidatePath('/') with revalidateTag('entity-tag') targeting only the specific data that changed.",
+      confidence: "HIGH",
+      confidenceReason: "Surgical invalidation is always correct when the scope of change is a single entity — revalidateTag() is O(1), revalidatePath('/') is O(all cached routes).",
+      architecture: "Surgical invalidation principle: the scope of revalidation equals the scope of mutation. Design entity-scoped cache tags at the data layer and invalidate them at the mutation layer.",
+      alternatives: [
+        "Use revalidatePath('/specific-page') to scope invalidation to only the affected pages",
+        "Use revalidatePath('/entity-type/[id]', 'page') to scope to a dynamic segment",
+      ],
+    },
+    severity: "MEDIUM",
+    kind: "cache",
+    confidence: 0.85,
+    detectionMode: "heuristic",
+  },
+
+  // ── Routing/Static Generation rules ────────────────────────────────────────
+
+  "RE-003": {
+    id: "RE-003",
+    name: "Dynamic route missing generateStaticParams()",
+    category: "DYNAMIC_RENDER_TRIGGER",
+    severityBase: 6,
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
+    triggers: { patterns: [/\[.*\]\/page\./] },
+    boundary: "RSC_RENDER",
+    message: {
+      cause: "A dynamic route segment ([param]) does not export generateStaticParams(), preventing Next.js from statically generating the known paths at build time.",
+      impact: "All matching routes are rendered server-side on every request (dynamic rendering) instead of being pre-built as static HTML. Increases TTFB and server load for routes that could be static.",
+      ruleExplanation: "Next.js can statically generate dynamic routes if it knows the possible values of the dynamic segment at build time. generateStaticParams() provides these values, enabling Full Route Cache and eliminating per-request server rendering for known paths.",
+    },
+    fix: {
+      primary: "Export generateStaticParams() from the page: export async function generateStaticParams() { const items = await getItems(); return items.map(item => ({ id: item.id.toString() })); }",
+      confidence: "MEDIUM",
+      confidenceReason: "Correct optimization but only applicable when the set of possible param values is known and finite at build time.",
+      architecture: "Categorize dynamic routes: known-finite paths use generateStaticParams() for static generation; truly dynamic paths (user-generated slugs) use dynamic rendering with appropriate caching.",
+      alternatives: [
+        "Add export const dynamicParams = false to return 404 for any path not returned by generateStaticParams()",
+        "Use ISR with revalidate to statically serve known paths while allowing new paths to generate on-demand",
+      ],
+    },
+    severity: "MEDIUM",
+    kind: "performance",
+    confidence: 0.65,
+    detectionMode: "heuristic",
+  },
+
+  // ── Server Action cache rules ───────────────────────────────────────────────
+
+  "DYNAMIC_RENDER_TRIGGER-004": {
+    id: "DYNAMIC_RENDER_TRIGGER-004",
+    name: "Server Action mutation without cache revalidation",
+    category: "DYNAMIC_RENDER_TRIGGER",
+    severityBase: 7,
+    phases: ["SERVER_ACTION"],
+    phaseCorrectness: {
+      RSC_RENDER: "valid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "invalid",
+      BUNDLER_RESOLUTION: "valid",
+    },
+    triggers: { patterns: [/\bdb\.\w+|\bfetch\b/] },
+    boundary: "RSC_RENDER",
+    message: {
+      cause: "A Server Action performs a database mutation or data write but does not call revalidateTag(), revalidatePath(), or redirect() to clear stale cached data.",
+      impact: "The mutation succeeds but the Router Cache and Data Cache retain the old data. Users see stale content on the next page visit until the cache naturally expires.",
+      ruleExplanation: "Next.js caches route renders in the Router Cache (client-side) and Data Cache (server-side). Mutations that skip revalidation leave both caches serving pre-mutation data. Every mutation action must include an explicit cache invalidation strategy.",
+    },
+    fix: {
+      primary: "Add revalidateTag('affected-tag') or revalidatePath('/affected-page') immediately after the mutation completes.",
+      confidence: "HIGH",
+      confidenceReason: "Mandatory pattern — Next.js docs explicitly require cache invalidation after Server Action mutations to maintain data consistency.",
+      architecture: "Every mutation action follows a three-step pattern: validate input → perform mutation → invalidate cache (revalidateTag) → optionally redirect. No exceptions.",
+      alternatives: [
+        "Use redirect() after mutation — Next.js automatically invalidates the Router Cache for the redirected path",
+        "Use revalidatePath('/path', 'layout') to invalidate all pages under a layout segment",
+      ],
+    },
+    severity: "HIGH",
+    kind: "cache",
+    confidence: 1.0,
+    detectionMode: "deterministic",
+  },
+
+  "MW-002": {
+    id: "MW-002",
+    name: "Strictly Configure Middleware Matcher to Ignore Static Assets",
+    category: "RSC_API_VIOLATION",
+    severityBase: 5,
+    phases: ["BUNDLER_RESOLUTION"],
+    phaseCorrectness: {
+      RSC_RENDER: "valid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "invalid",
+    },
+    triggers: { nodeType: ["SourceFile"] },
+    boundary: "ROUTE_HANDLER_EXECUTION",
+    message: {
+      cause: "Middleware matcher configuration is missing or does not exclude system and static asset routes.",
+      impact: "Middleware execution triggers on all network asset requests, inflating response latency and cloud computing cost.",
+      ruleExplanation: "Next.js Middleware intercepts all route requests by default. Restricting it with a matcher avoids running logic on static resources like CSS, JS, and images.",
+    },
+    fix: {
+      primary: "Define a config matcher to restrict Middleware execution to actual routing paths, excluding static files.",
+      confidence: "HIGH",
+      confidenceReason: "Standard framework optimization to prevent performance and resource usage overhead.",
+      architecture: "Define routing policies inside clear matching boundaries. Keep middleware script footprint minimal.",
+      alternatives: [
+        "Use standard negative-lookahead regex matcher: '/((?!_next/static|_next/image|favicon.ico|.*\\\\.png$).*)'"
+      ],
+    },
+    severity: "MEDIUM",
+    kind: "architecture",
+    confidence: 0.90,
+    detectionMode: "deterministic",
+  },
+
+  "BD-003": {
+    id: "BD-003",
+    name: "Avoid Centralized Barrel File Imports in Client Components",
+    category: "CLIENT_GRAPH_LEAK",
+    severityBase: 4,
+    phases: ["BUNDLER_RESOLUTION"],
+    phaseCorrectness: {
+      RSC_RENDER: "valid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "invalid",
+    },
+    triggers: { nodeType: ["SourceFile"] },
+    boundary: "CLIENT_RENDER",
+    message: {
+      cause: "Importing modules from a centralized barrel file (index.ts) inside a Client Component defeats tree-shaking.",
+      impact: "Inflation of the clientside JS bundle size due to compiling unused dependencies imported through the barrel file.",
+      ruleExplanation: "Webpack/Turbopack cannot effectively tree-shake unused exports when imported through a multi-export barrel file, pulling in the entire consolidated dependency tree.",
+    },
+    fix: {
+      primary: "Import components directly from their specific individual file path rather than the centralized index file.",
+      confidence: "HIGH",
+      confidenceReason: "Ensures only the required code is compiled into the client bundle.",
+      architecture: "Avoid root barrel files in components directory. Structure imports explicitly.",
+      alternatives: [
+        "Configure sideEffects: false in package.json to assist compiler tree-shaking"
+      ],
+    },
+    severity: "MEDIUM",
+    kind: "performance",
+    confidence: 0.85,
+    detectionMode: "heuristic",
+  },
+
+  "SA-002": {
+    id: "SA-002",
+    name: "Server Action Arguments and Return Values Must Be Serializable",
+    category: "SERVER_ACTION_MISUSE",
+    severityBase: 8,
+    phases: ["SERVER_ACTION"],
+    phaseCorrectness: {
+      RSC_RENDER: "valid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "invalid",
+      BUNDLER_RESOLUTION: "valid",
+    },
+    triggers: { nodeType: ["FunctionDeclaration"] },
+    boundary: "SERVER_ACTION_EXECUTION",
+    message: {
+      cause: "A Server Action accepts or returns non-serializable values (like functions, classes, or database connections).",
+      impact: "Serialization failure during execution — the action throws at runtime and the client receives a 500 error.",
+      ruleExplanation: "Server Actions execute over HTTP; all inputs and outputs must be serializable to React Server Component payload format.",
+    },
+    fix: {
+      primary: "Pass and return only plain, serializable structures: primitives, plain objects, arrays, or FormData.",
+      confidence: "HIGH",
+      confidenceReason: "Strict framework serialization contract.",
+      architecture: "Map ORM model instances to clean DTOs before returning them from Server Actions.",
+      alternatives: [
+        "Return structured plain objects: { success: true, data: { ... } } or { error: 'message' }"
+      ],
+    },
+    severity: "HIGH",
+    kind: "architecture",
+    confidence: 0.90,
+    detectionMode: "heuristic",
+  },
+
+  "RV-002": {
+    id: "RV-002",
+    name: "Time-based Cache Revalidation Mismatch",
+    category: "DYNAMIC_RENDER_TRIGGER",
+    severityBase: 5,
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
+    triggers: { nodeType: ["SourceFile"] },
+    boundary: "RSC_RENDER",
+    message: {
+      cause: "Setting low revalidation intervals in layouts can cause caching mismatch boundaries with child route segments.",
+      impact: "Static HTML pages served to users remain stale while dynamic child data updates, causing rendering inconsistencies.",
+      ruleExplanation: "Caching strategies should be aligned between layout shells and child pages to ensure consistent rendering outputs.",
+    },
+    fix: {
+      primary: "Align layout-wide revalidation values with child pages to ensure stable data synchronization.",
+      confidence: "HIGH",
+      confidenceReason: "Prevents serving mismatched layout/page content states.",
+      architecture: "Declare consistent global segment behaviors (e.g. export const revalidate = 60) across routing trees.",
+      alternatives: [
+        "Use dynamic route configurations consistently instead of mismatched revalidation times"
+      ],
+    },
+    severity: "MEDIUM",
+    kind: "cache",
+    confidence: 0.85,
+    detectionMode: "heuristic",
+  },
+
+  "OB-002": {
+    id: "OB-002",
+    name: "Avoid console.log in High-Frequency Edge Routes",
+    category: "DYNAMIC_RENDER_TRIGGER",
+    severityBase: 4,
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
+    triggers: { nodeType: ["SourceFile"] },
+    boundary: "ROUTE_HANDLER_EXECUTION",
+    message: {
+      cause: "Using raw console.log inside Edge middleware or high-frequency routes prints excessive diagnostics.",
+      impact: "Saturates execution logging pools, blocks thread execution in V8 isolates, and increases operational log costs.",
+      ruleExplanation: "High-frequency logging in hot request paths degrades performance and inflates log storage costs.",
+    },
+    fix: {
+      primary: "Replace raw console.log statements with gated conditional loggers (development-only or structured).",
+      confidence: "HIGH",
+      confidenceReason: "Reduces logging overhead in performance-critical execution paths.",
+      architecture: "Separate application diagnostics from user request traffic. Use conditional production log limits.",
+      alternatives: [
+        "Use structured, level-gated logger packages like pino or winston"
+      ],
+    },
+    severity: "LOW",
+    kind: "performance",
+    confidence: 0.90,
+    detectionMode: "deterministic",
+  },
+
+  "SE-001": {
+    id: "SE-001",
+    name: "Do Not Expose Private Secrets in NEXT_PUBLIC Environment Variables",
+    category: "RSC_API_VIOLATION",
+    severityBase: 8,
+    phases: ["BUNDLER_RESOLUTION"],
+    phaseCorrectness: {
+      RSC_RENDER: "valid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "invalid",
+    },
+    triggers: { nodeType: ["SourceFile"] },
+    boundary: "CLIENT_RENDER",
+    message: {
+      cause: "Sensitive keys or DB urls are prefixed with the NEXT_PUBLIC_ identifier.",
+      impact: "Backend credentials compile directly into the public JavaScript bundle, exposing them to client-side inspection.",
+      ruleExplanation: "NEXT_PUBLIC_ env variables are inlined in the client build. Stripping this prefix protects secrets from leakage.",
+    },
+    fix: {
+      primary: "Remove NEXT_PUBLIC_ from the env variable name and access it only inside Server Component scopes.",
+      confidence: "HIGH",
+      confidenceReason: "Security boundary requirement — client bundle analysis exposes public strings.",
+      architecture: "Keep private keys undecorated (e.g. STRIPE_KEY) and guard with server-only package imports.",
+      alternatives: [
+        "Load secrets on-demand at server runtime instead of static build replacement"
+      ],
+    },
+    severity: "CRITICAL",
+    kind: "security",
+    confidence: 0.95,
+    detectionMode: "deterministic",
+  },
+  "DYNAMIC_LAYOUT_IMPACT": {
+    id: "DYNAMIC_LAYOUT_IMPACT",
+    name: "Avoid Dynamic request-time APIs blocking initial layout streaming",
+    category: "DYNAMIC_RENDER_TRIGGER",
+    severityBase: 6,
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
+    triggers: { nodeType: ["SourceFile"] },
+    boundary: "RSC_RENDER",
+    message: {
+      cause: "Accessing dynamic server APIs (cookies(), headers()) in layout component body blocks progressive streaming.",
+      impact: "The layout shell and its subtree are forced into dynamic on-demand rendering.",
+      ruleExplanation: "Root layouts should remain static and lightweight. Extract user-specific details into Suspense-wrapped async sub-components.",
+    },
+    fix: {
+      primary: "Wrap dynamic header/profile components in Suspense boundaries to allow page shell pre-rendering.",
+      confidence: "HIGH",
+      confidenceReason: "Standard streaming performance optimization pattern.",
+      architecture: "Adopt a shell-and-grain page design to serve static containers instantly while stream dynamic grains.",
+      alternatives: [
+        "Use Client Component dynamic mounts or POST-hydration cookies fetch"
+      ],
+    },
+    severity: "HIGH",
+    kind: "performance",
+    confidence: 0.90,
+    detectionMode: "heuristic",
+  },
 };
 
+
+/**
+ * Normalises tiered/suffixed diagnostic IDs to their base constraint IDs.
+ */
+export function getBaseConstraintId(id: string): string {
+  if (id.startsWith("DYNAMIC_LAYOUT_IMPACT-")) {
+    return "DYNAMIC_LAYOUT_IMPACT";
+  }
+  if (id.startsWith("DF-005-")) {
+    return "DF-005";
+  }
+  if (id.startsWith("RE-003-")) {
+    return "RE-003";
+  }
+  if (id.startsWith("DYNAMIC_RENDER_TRIGGER-004-")) {
+    return "DYNAMIC_RENDER_TRIGGER-004";
+  }
+  return id;
+}
 
 /**
  * Look up a RuleSpec by constraint ID.
  * Returns undefined if the rule is not in the registry.
  */
 export function getRuleSpec(constraintId: string): RuleSpec | undefined {
-  return RULE_REGISTRY[constraintId];
+  const baseId = getBaseConstraintId(constraintId);
+  return RULE_REGISTRY[baseId];
 }
 
 /**
@@ -1010,9 +2041,10 @@ export function getRuleSpec(constraintId: string): RuleSpec | undefined {
  * Throws if the rule is not found — use in contexts where the ID is guaranteed valid.
  */
 export function requireRuleSpec(constraintId: string): RuleSpec {
-  const spec = RULE_REGISTRY[constraintId];
+  const baseId = getBaseConstraintId(constraintId);
+  const spec = RULE_REGISTRY[baseId];
   if (!spec) {
-    throw new Error(`[rule-registry] No RuleSpec found for constraint ID: "${constraintId}"`);
+    throw new Error(`[rule-registry] No RuleSpec found for constraint ID: "${constraintId}" (base: "${baseId}")`);
   }
   return spec;
 }

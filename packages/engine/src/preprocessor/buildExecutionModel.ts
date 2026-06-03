@@ -272,8 +272,8 @@ export function buildExecutionModel(
 
   // Identify server APIs via imports and direct usage
   const serverApiModules = ["next/headers", "next/cache", "server-only", "next-auth", "@prisma/client", "drizzle-orm"];
-  const serverApiNamedExports = new Set(["cookies", "headers", "draftMode", "unstable_noStore", "revalidatePath", "revalidateTag"]);
-  const requestContextExports = new Set(["cookies", "headers", "draftMode", "unstable_noStore"]);
+  const serverApiNamedExports = new Set(["cookies", "headers", "draftMode", "unstable_noStore", "connection", "revalidatePath", "revalidateTag"]);
+  const requestContextExports = new Set(["cookies", "headers", "draftMode", "unstable_noStore", "connection"]);
 
   analysis.importDetails.forEach((imp) => {
     if (serverApiModules.some((mod) => imp.moduleSpecifier.includes(mod))) {
@@ -297,7 +297,7 @@ export function buildExecutionModel(
   });
 
   // AST Check for usage of server APIs
-  const serverApiCallNames = new Set(["cookies", "headers", "draftMode", "unstable_noStore", "revalidatePath", "revalidateTag"]);
+  const serverApiCallNames = new Set(["cookies", "headers", "draftMode", "unstable_noStore", "connection", "revalidatePath", "revalidateTag"]);
   if (sourceFile) {
     sourceFile.forEachDescendant((node) => {
       if (node.getKindName() === "CallExpression") {
@@ -458,9 +458,19 @@ export function buildExecutionModel(
   // 6. RENDERING MODE INFERENCE
   let renderingMode: "static" | "dynamic" | "streaming" | "unknown" = "static";
   const hasDynamicTriggers = 
-    usesServerApis.some((api) => api.includes("cookies") || api.includes("headers") || api.includes("unstable_noStore") || api.includes("draftMode")) ||
+    usesServerApis.some((api) => 
+      api.includes("cookies") || 
+      api.includes("headers") || 
+      api.includes("unstable_noStore") || 
+      api.includes("draftMode") || 
+      api.includes("connection")
+    ) ||
     segmentDynamic === "force-dynamic" ||
-    (content && (content.includes("searchParams") && (isPageOrLayout || isRouteHandler)));
+    (content && (
+      (content.includes("searchParams") && (isPageOrLayout || isRouteHandler)) ||
+      content.includes("Date.now(") ||
+      content.includes("Math.random(")
+    ));
 
   const hasSuspense = content && (content.includes("<Suspense") || content.includes("Suspense"));
 

@@ -6,7 +6,8 @@
   "scripts": {
     "analyze": "next-intel analyze",
     "build": "pnpm -r build",
-    "test": "pnpm --filter engine test"
+    "test": "pnpm --filter engine test",
+    "stress-test": "tsx run-ultimate-stress-test.ts"
   },
   "keywords": [],
   "author": "",

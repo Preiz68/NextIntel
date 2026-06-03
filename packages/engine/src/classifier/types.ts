@@ -40,7 +40,11 @@ export type DynamicTrigger =
   | "searchParams"
   | "noStore"
   | "force-dynamic"
-  | "unstable_noStore";
+  | "unstable_noStore"
+  | "draftMode"
+  | "connection"
+  | "dateNow"
+  | "mathRandom";
 
 // ---------------------------------------------------------------------------
 // 2. Extracted Semantics

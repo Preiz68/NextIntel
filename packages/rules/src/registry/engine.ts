@@ -11,11 +11,13 @@ import { deduplicateDiagnostics as runDeduplication } from "./diagnostic-deduper
 import { TaintEngine, ExecutionSimulator } from "engine";
 import path from "node:path";
 import { buildSemanticIR } from "./semantic-ir.js";
+import { calculateSeverityScore, toDiagnosticSeverity, applyContextualScoreOverride, toSeverityLevel } from "./scoring.js";
+import { resolveBoundary } from "./boundary-resolver.js";
 
 // Export new modules so consumers can use them
 export { buildSemanticIR } from "./semantic-ir.js";
 export { RULE_REGISTRY, getRuleSpec, requireRuleSpec } from "./rule-registry.js";
-export { calculateSeverityScore, toSeverityLevel, toDiagnosticSeverity } from "./scoring.js";
+export { calculateSeverityScore, toSeverityLevel, toDiagnosticSeverity, applyContextualScoreOverride } from "./scoring.js";
 export { resolveBoundary, phaseMetadata } from "./boundary-resolver.js";
 export { renderGroupedDiagnostics } from "./formatter.js";
 export type { FileMeta, NodeContext, BoundaryResolution } from "./boundary-resolver.js";
@@ -105,7 +107,80 @@ export class RuleEngine {
     }
 
     // Deduplicate and collapse propagated diagnostics
-    return runDeduplication(allDiagnostics, (d) => resolveRootCause(d.file, d.id || d.ruleId, context.graph, context.nodes, d));
+    const collapsed = runDeduplication(allDiagnostics, (d) => resolveRootCause(d.file, d.id || d.ruleId, context.graph, context.nodes, d));
+
+    // Normalize and dynamically set diagnostic severity using severity gating scores
+    for (const d of collapsed) {
+      const node = context.nodes.get(d.file);
+      const kind = node?.semanticKind ?? "unknown";
+
+      const fileMeta = {
+        kind,
+        isClientComponent: node?.isClientComponent === true || kind === "client-component" || kind === "client-util",
+        isServerComponent: node?.isServerComponent === true || kind === "server-component" || kind === "server-util",
+        isServerAction: kind === "server-action" || d.file.toLowerCase().includes("action"),
+        filePath: d.file,
+      };
+
+      const affects = d.message ? extractAffects(d.message) : [];
+      const nodeCtx = {
+        isHydrationSensitive: d.id === "HY-RENDER-BROWSER-API-001" || affects.some(a => ["localstorage", "sessionstorage", "window", "navigator", "document"].includes(a.toLowerCase())),
+        isClientToServerImport: d.id === "CC-SERVER-IMPORT-001" || d.id === "CC-RUNTIME-LEAK-001",
+      };
+
+      const resolved = resolveBoundary(fileMeta, nodeCtx);
+      const spec = getRuleSpec(d.id || d.ruleId);
+      const confidence = spec?.confidence ?? 1.0;
+
+      const depPath = buildDependencyPath(d.file, d.id || d.ruleId, affects);
+      const propagationDepth = depPath.split("\n").filter(line => line.includes("→ imports") || line.includes("→ exports")).length + 1;
+
+      let scoreLookupId = d.id || d.ruleId;
+      if (scoreLookupId === "DF-005" && (d as any).waterfallTier) {
+        scoreLookupId = `DF-005-${(d as any).waterfallTier}`;
+      } else if (scoreLookupId === "DYNAMIC_RENDER_TRIGGER-004" && (d as any).analyticsExclusion) {
+        scoreLookupId = "DYNAMIC_RENDER_TRIGGER-004-ANALYTICS";
+      }
+
+      const scoring = calculateSeverityScore(scoreLookupId, resolved.phase, confidence, propagationDepth, d.isGuarded);
+      
+      // Apply context-aware overrides for rules whose severity scales with runtime metadata
+      let finalScore = scoring.score;
+      const constraintId = d.id || d.ruleId;
+
+      if (constraintId === "RO-005") {
+        // RO-005: info/warning/high depends on fetch count and waterfall pattern
+        finalScore = applyContextualScoreOverride(constraintId, finalScore, {
+          fetchCount: d.fetchCount,
+          isWaterfall: d.isWaterfall,
+        });
+      } else if (constraintId === "RO-006") {
+        // RO-006: auth/session/tenant layout awaits are downgraded to info
+        finalScore = applyContextualScoreOverride(constraintId, finalScore, {
+          isCriticalLayoutPath: (d as any).isCriticalLayoutPath,
+        });
+      } else if (constraintId === "DYNAMIC_LAYOUT_IMPACT") {
+        // DYNAMIC_LAYOUT_IMPACT: severity scales with layout depth
+        // Root layout (depth 0) = affects whole app; nested = only affects subtree
+        const normFile = d.file.replace(/\\/g, "/");
+        const appIdx = normFile.indexOf("/app/");
+        let layoutDepth = 0;
+        if (appIdx !== -1) {
+          const relPath = normFile.substring(appIdx + 5);
+          const segments = relPath.split("/").filter(s => s.length > 0);
+          // Count meaningful path segments before the layout file (exclude route groups)
+          layoutDepth = segments.slice(0, -1).filter(
+            s => !s.startsWith("(") && !s.startsWith("@")
+          ).length;
+        }
+        finalScore = applyContextualScoreOverride(constraintId, finalScore, { layoutDepth });
+      }
+
+      // Override default static severity with the calculated hard-gated diagnostic severity
+      d.severity = toDiagnosticSeverity(toSeverityLevel(finalScore));
+    }
+
+    return collapsed;
   }
 }
 
@@ -584,4 +659,18 @@ export function buildDependencyPath(
   }
 
   return result;
+}
+
+function extractAffects(msg: string): string[] {
+  if (!msg) return [];
+  const matches = [...msg.matchAll(/'([^']+)'/g)];
+  return matches.length > 0
+    ? matches
+        .map((m) => m[1]!)
+        .filter((val) => {
+          if (/\.[a-zA-Z0-9]{2,4}$/.test(val)) return false;
+          if (val.startsWith("/") || val.startsWith("\\")) return false;
+          return true;
+        })
+    : [];
 }

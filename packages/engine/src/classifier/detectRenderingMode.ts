@@ -1,6 +1,7 @@
 import type { RenderingSemantics, DynamicTrigger } from "./types.js";
 import type { FileAnalysis } from "../analyzer/types.js";
 import fs from "node:fs";
+import path from "node:path";
 
 /**
  * Determines the rendering mode (static, dynamic, isr, etc.) based on
@@ -45,6 +46,36 @@ export function detectRenderingMode(analysis: FileAnalysis): RenderingSemantics 
         if (segmentDynamic === "force-dynamic") {
           triggers.push("force-dynamic");
         }
+      }
+
+      const ext = path.extname(analysis.filePath).toLowerCase();
+      const basename = path.basename(analysis.filePath, ext);
+      const isPageOrLayout = ["page", "layout"].includes(basename);
+      const isRouteHandler = basename === "route";
+
+      if (content.includes("cookies()")) {
+        if (!triggers.includes("cookies")) triggers.push("cookies");
+      }
+      if (content.includes("headers()")) {
+        if (!triggers.includes("headers")) triggers.push("headers");
+      }
+      if (content.includes("draftMode()")) {
+        triggers.push("draftMode");
+      }
+      if (content.includes("connection()")) {
+        triggers.push("connection");
+      }
+      if (content.includes("unstable_noStore()")) {
+        triggers.push("unstable_noStore");
+      }
+      if (content.includes("Date.now()")) {
+        triggers.push("dateNow");
+      }
+      if (content.includes("Math.random()")) {
+        triggers.push("mathRandom");
+      }
+      if (content.includes("searchParams") && (isPageOrLayout || isRouteHandler)) {
+        triggers.push("searchParams");
       }
     } catch (e) {
       // ignore

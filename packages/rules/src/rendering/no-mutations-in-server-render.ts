@@ -18,6 +18,20 @@ export const noMutationsInServerRender: Rule = {
       const isServer = !analysis.isClientComponent && analysis.executionModel.componentType !== "client";
       if (!isServer) continue;
 
+      const isComponentOrLayout =
+        analysis.semanticKind === "page" ||
+        analysis.semanticKind === "layout" ||
+        analysis.semanticKind === "template" ||
+        analysis.semanticKind === "loading" ||
+        analysis.semanticKind === "error" ||
+        analysis.semanticKind === "not-found" ||
+        analysis.semanticKind === "global-error" ||
+        analysis.semanticKind === "default" ||
+        analysis.semanticKind === "server-component" ||
+        analysis.semanticKind === "client-component";
+
+      if (!isComponentOrLayout) continue;
+
       let content = "";
       try {
         content = readFileSync(analysis.filePath, "utf-8");

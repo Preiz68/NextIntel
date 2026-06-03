@@ -174,6 +174,8 @@ export interface Diagnostic {
   id: string; // Constraint ID (e.g. SC-BROWSER-API-001)
   message: string;
   isGuarded?: boolean;
+  fetchCount?: number;
+  isWaterfall?: boolean;
 
   // ── Knowledge-driven enrichment ──────────────────────────────────────────
   /** Why this violation matters in production Next.js applications. */

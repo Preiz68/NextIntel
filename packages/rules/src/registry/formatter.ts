@@ -1,7 +1,7 @@
 import path from "node:path";
-import { Diagnostic, ExecutionPhase } from "../types.js";
+import { Diagnostic, ExecutionPhase, SeverityLevel } from "../types.js";
 import { getRuleSpec } from "./rule-registry.js";
-import { calculateSeverityScore } from "./scoring.js";
+import { calculateSeverityScore, getRuleAuditMetadata, applyContextualScoreOverride, toSeverityLevel } from "./scoring.js";
 import { resolveBoundary, phaseMetadata, FileMeta, NodeContext } from "./boundary-resolver.js";
 import { generateExecutionGraph } from "./execution-graph-generator.js";
 import { generateCodeFrame } from "./codeframe-generator.js";
@@ -19,6 +19,24 @@ interface GroupedRule {
   affects: string[];
   lineDetails: LineDetail[];
   diagnostics: Diagnostic[];
+  precomputed: {
+    displayLevel: "BLOCKER" | "WARNING" | "INFO";
+    severityColor: string;
+    scoring: any;
+    targetLine: number;
+    depPath: string;
+    executionGraph: string;
+    codeframe: string;
+    causeText: string;
+    boundaryLabel: string;
+    resolved: any;
+    spec: any;
+    confidence: number;
+    mode: string;
+    primaryFix?: string;
+    architectureFix?: string;
+    alternativesFix?: string[];
+  };
 }
 
 interface GroupedDiagnostic {
@@ -27,8 +45,68 @@ interface GroupedDiagnostic {
 }
 
 function extractAffects(msg: string): string[] {
+  if (!msg) return [];
   const matches = [...msg.matchAll(/'([^']+)'/g)];
-  return matches.length > 0 ? matches.map((m) => m[1]!) : [];
+  return matches.length > 0
+    ? matches
+        .map((m) => m[1]!)
+        .filter((val) => {
+          if (/\.[a-zA-Z0-9]{2,4}$/.test(val)) return false;
+          if (val.startsWith("/") || val.startsWith("\\")) return false;
+          return true;
+        })
+    : [];
+}
+
+function getFileRank(filePath: string): number {
+  const base = path.basename(filePath).toLowerCase();
+  // Layouts first
+  if (base.includes("layout.")) {
+    return 1;
+  }
+  // Pages and Templates
+  if (base.includes("page.") || base.includes("template.")) {
+    return 2;
+  }
+  // Route / special files
+  if (
+    base.includes("loading.") ||
+    base.includes("error.") ||
+    base.includes("not-found.") ||
+    base.includes("global-error.") ||
+    base.includes("default.") ||
+    base.includes("route.") ||
+    base.includes("middleware.")
+  ) {
+    return 3;
+  }
+  // Components
+  if (
+    filePath.toLowerCase().includes("/components/") ||
+    base.endsWith(".tsx") ||
+    base.endsWith(".jsx")
+  ) {
+    return 4;
+  }
+  // Utilities, actions, handlers, etc.
+  return 5;
+}
+
+function getFixPriority(file: string, displayLevel: "BLOCKER" | "WARNING" | "INFO"): number {
+  const fileRank = getFileRank(file); // 1 = layout, 2 = page, 3 = special, 4 = component, 5 = utility/other
+  let base = 0;
+  if (displayLevel === "BLOCKER") {
+    base = 0; // priority 1-5
+  } else if (displayLevel === "WARNING") {
+    base = 5; // priority 6-10
+  } else {
+    base = 10; // priority 11-15
+  }
+  return base + fileRank;
+}
+
+function getIssueCategory(ruleId: string, level: SeverityLevel, context?: { fetchCount?: number; isWaterfall?: boolean; layoutDepth?: number }): string {
+  return getRuleAuditMetadata(ruleId, level, context).category;
 }
 
 function buildFileMeta(filePath: string): FileMeta {
@@ -101,49 +179,64 @@ export function renderGroupedDiagnostics(diagnostics: Diagnostic[]): string {
       }
 
       lineDetails.sort((a, b) => a.line - b.line);
+      const targetLine = lineDetails[0]?.line ?? 1;
 
       const spec = getRuleSpec(ruleId);
-      rulesList.push({
-        ruleId,
-        lines: Array.from(linesSet).sort((a, b) => a - b),
-        message: spec?.name ?? diags[0]!.message,
-        affects: Array.from(affectsSet),
-        lineDetails,
-        diagnostics: diags,
-      });
-    }
+      const affects = Array.from(affectsSet);
 
-    rulesList.sort((a, b) => a.ruleId.localeCompare(b.ruleId));
-    groupedDiagnostics.push({ file: filePath, rules: rulesList });
-  }
-
-  // 2. Render each violation block
-  let output = "";
-
-  for (const group of groupedDiagnostics) {
-    output += `\n\x1b[1mFile: ${group.file}\x1b[0m\n`;
-
-    for (const rule of group.rules) {
-      const { ruleId, affects, lineDetails, diagnostics: ruleDiags } = rule;
-      const spec = getRuleSpec(ruleId);
-
-      const fileMeta = buildFileMeta(group.file);
+      const fileMeta = buildFileMeta(filePath);
       const nodeCtx = buildNodeContext(ruleId, affects);
 
       const resolved = resolveBoundary(fileMeta, nodeCtx);
-      const validity = spec?.phaseCorrectness?.[resolved.phase] ?? "invalid";
-
       const confidence = spec?.confidence ?? 1.0;
       const mode = spec?.detectionMode ?? "deterministic";
 
       // Build dependency trace
-      const depPath = buildDependencyPath(group.file, ruleId, affects);
+      const depPath = buildDependencyPath(filePath, ruleId, affects);
       const propagationDepth = depPath.split("\n").filter(line => line.includes("→ imports") || line.includes("→ exports")).length + 1;
 
-      const isGuarded = ruleDiags.some(d => d.isGuarded);
+      const isGuarded = diags.some(d => d.isGuarded);
       const scoring = spec
         ? calculateSeverityScore(ruleId, resolved.phase, confidence, propagationDepth, isGuarded)
-        : { score: 5.0, level: "MEDIUM" as const, impactScores: { hydration: 5, rendering: 5, bundleSize: 3, caching: 3, security: 3, serverLoad: 3 } };
+        : { score: 5.0, level: "MEDIUM" as const, impactScores: { hydration: 5, rendering: 5, bundle: 3, security: 3, cache: 3, runtime: 5 } };
+
+      if (spec) {
+        let finalScore = scoring.score;
+        if (ruleId === "RO-005") {
+          finalScore = applyContextualScoreOverride(ruleId, finalScore, {
+            fetchCount: diags[0]?.fetchCount,
+            isWaterfall: diags[0]?.isWaterfall,
+          });
+        } else if (ruleId === "RO-006") {
+          finalScore = applyContextualScoreOverride(ruleId, finalScore, {
+            isCriticalLayoutPath: (diags[0] as any)?.isCriticalLayoutPath,
+          });
+        } else if (ruleId === "DYNAMIC_LAYOUT_IMPACT") {
+          const normFile = filePath.replace(/\\/g, "/");
+          const appIdx = normFile.indexOf("/app/");
+          let layoutDepth = 0;
+          if (appIdx !== -1) {
+            const relPath = normFile.substring(appIdx + 5);
+            const segments = relPath.split("/").filter(s => s.length > 0);
+            layoutDepth = segments.slice(0, -1).filter(
+              s => !s.startsWith("(") && !s.startsWith("@")
+            ).length;
+          }
+          finalScore = applyContextualScoreOverride(ruleId, finalScore, { layoutDepth });
+        }
+        scoring.score = finalScore;
+        scoring.level = toSeverityLevel(finalScore);
+      }
+
+      const displayLevel =
+        scoring.level === "CRITICAL" ? "BLOCKER" :
+        (scoring.level === "HIGH" || scoring.level === "MEDIUM") ? "WARNING" :
+        "INFO";
+
+      const severityColor =
+        displayLevel === "BLOCKER" ? "\x1b[31m" :
+        displayLevel === "WARNING" ? "\x1b[33m" :
+        "\x1b[36m";
 
       // Extract raw paths from trace for graph drawing
       const rawTracePaths = depPath
@@ -158,35 +251,43 @@ export function renderGroupedDiagnostics(diagnostics: Diagnostic[]): string {
       const tracePaths: string[] = [];
       const nodes = getLastGraphNodes();
       if (nodes) {
-        for (const item of rawTracePaths) {
-          // find matching absolute path in graph node keys
+        for (let i = 0; i < rawTracePaths.length; i++) {
+          const item = rawTracePaths[i]!;
           let foundPath = item;
-          for (const key of nodes.keys()) {
-            if (key.endsWith(item)) {
-              foundPath = key;
-              break;
+          if (i === 0) {
+            foundPath = filePath;
+          } else {
+            for (const key of nodes.keys()) {
+              if (key.endsWith("/" + item) || key.endsWith("\\" + item) || key === item) {
+                foundPath = key;
+                break;
+              }
+            }
+            if (foundPath === item) {
+              for (const key of nodes.keys()) {
+                if (key.endsWith(item)) {
+                  foundPath = key;
+                  break;
+                }
+              }
             }
           }
           tracePaths.push(foundPath);
         }
       }
       if (tracePaths.length === 0) {
-        tracePaths.push(group.file);
+        tracePaths.push(filePath);
         if (affects.length > 0) {
           tracePaths.push(affects[0]!);
         }
       }
 
       const executionGraph = generateExecutionGraph(tracePaths, resolvedOwnerships, resolvedRuntimes);
+      const codeframe = generateCodeFrame(filePath, targetLine, affects);
 
-      // Generate codeframe for first target line
-      const targetLine = lineDetails[0]?.line ?? 1;
-      const codeframe = generateCodeFrame(group.file, targetLine, affects);
-
-      // Build text explanations
       const affectsStr = affects.length > 0 ? affects.join(", ") : "the affected symbol";
-      const causeText = (ruleId === "CC-RUNTIME-LEAK-001" && ruleDiags[0]?.message)
-        ? ruleDiags[0].message
+      const causeText = (ruleId === "CC-RUNTIME-LEAK-001" && diags[0]?.message)
+        ? diags[0].message
         : (spec
             ? (affects.length > 0
                 ? `'${affectsStr}' — ${spec.message.cause.charAt(0).toLowerCase()}${spec.message.cause.slice(1)}`
@@ -195,19 +296,212 @@ export function renderGroupedDiagnostics(diagnostics: Diagnostic[]): string {
 
       const boundaryLabel = spec?.boundary ?? "UNKNOWN_BOUNDARY";
 
-      // Color scheme
-      const levelStr = scoring.level;
-      const severityColor =
-        levelStr === "CRITICAL" ? "\x1b[31m"
-        : levelStr === "HIGH"   ? "\x1b[31m"
-        : levelStr === "MEDIUM" ? "\x1b[33m"
-        :                          "\x1b[36m";
+      rulesList.push({
+        ruleId,
+        lines: Array.from(linesSet).sort((a, b) => a - b),
+        message: spec?.name ?? diags[0]!.message,
+        affects,
+        lineDetails,
+        diagnostics: diags,
+        precomputed: {
+          displayLevel,
+          severityColor,
+          scoring,
+          targetLine,
+          depPath,
+          executionGraph,
+          codeframe,
+          causeText,
+          boundaryLabel,
+          resolved,
+          spec,
+          confidence,
+          mode,
+          primaryFix: spec?.fix?.primary,
+          architectureFix: spec?.fix?.architecture,
+          alternativesFix: spec?.fix?.alternatives,
+        }
+      });
+    }
+
+    rulesList.sort((a, b) => a.ruleId.localeCompare(b.ruleId));
+    groupedDiagnostics.push({ file: filePath, rules: rulesList });
+  }
+
+  // Sort groupedDiagnostics dynamically by risk ranking (layouts first)
+  groupedDiagnostics.sort((a, b) => {
+    const rankA = getFileRank(a.file);
+    const rankB = getFileRank(b.file);
+    if (rankA !== rankB) {
+      return rankA - rankB;
+    }
+    return a.file.localeCompare(b.file);
+  });
+
+function getRuleShortLabel(ruleId: string, affects: string[], message: string): string {
+  const id = ruleId.toUpperCase();
+  if (id.startsWith("DYNAMIC_LAYOUT_IMPACT")) {
+    if (id.includes("COSMETIC")) return "Cosmetic cookie access in root layout";
+    if (id.includes("AUTH")) return "Auth/session cookie in root layout";
+    if (id.includes("PERSONALIZATION")) return "Personalization cookie in root layout";
+    return "Dynamic layout rendering impact";
+  }
+  if (id.includes("DYNAMIC_RENDER_TRIGGER-003")) {
+    return "Dynamic API in root layout";
+  }
+  if (id.includes("DYNAMIC_RENDER_TRIGGER-004")) {
+    return "Missing cache revalidation";
+  }
+  if (id.includes("LAYOUT_AUTH_GATE")) {
+    return "Expected Authentication Boundary";
+  }
+  if (id.includes("RO-007")) {
+    return "Sequential Async Waterfall";
+  }
+  if (id.includes("RE-003-OPT")) {
+    return "Optimization Opportunity: Known finite routes can use generateStaticParams()";
+  }
+  if (id.includes("RE-003")) {
+    return "Missing generateStaticParams()";
+  }
+  if (id.includes("RO-003")) {
+    return "Parallel route slot missing default.tsx fallback";
+  }
+  if (id.includes("RO-005")) {
+    return "Streaming Opportunity: Wrap data fetch in Suspense boundary";
+  }
+  if (id.includes("CC-RUNTIME-LEAK-001")) {
+    return "Server API imported in client component";
+  }
+  if (id.includes("CC-SERVER-IMPORT-001")) {
+    return "Server Component imported in client component";
+  }
+  if (id.includes("DF-001")) {
+    return "Missing explicit cache strategy";
+  }
+  if (id.includes("DF-005")) {
+    return "Sequential fetch waterfall";
+  }
+  if (id.includes("HY-RENDER-BROWSER-API-001")) {
+    return "Browser API accessed during server rendering";
+  }
+  return message;
+}
+
+  let output = "";
+
+  // 2a. ASCII Tree summary grouped by developer categories
+  output += `\x1b[1m=========================================\n`;
+  output += `🌳 ARCHITECTURE & PERFORMANCE DIAGNOSTIC TREE\n`;
+  output += `=========================================\x1b[0m\n`;
+
+  const categories = {
+    "🚫 ARCHITECTURAL VIOLATIONS": new Map<string, GroupedRule[]>(),
+    "⚠️ PERFORMANCE RISKS": new Map<string, GroupedRule[]>(),
+    "💡 OPTIMIZATION OPPORTUNITIES": new Map<string, GroupedRule[]>(),
+  };
+
+  for (const group of groupedDiagnostics) {
+    for (const rule of group.rules) {
+      const normPath = group.file.replace(/\\/g, "/");
+      const appIdx = normPath.indexOf("/app/");
+      let layoutDepth = 0;
+      if (appIdx !== -1) {
+        const relPath = normPath.substring(appIdx + 5);
+        const segments = relPath.split("/").filter((s) => s.length > 0);
+        layoutDepth = segments
+          .slice(0, -1)
+          .filter((s) => !s.startsWith("(") && !s.startsWith("@")).length;
+      }
+
+      const catName = getIssueCategory(
+        rule.ruleId,
+        rule.precomputed.scoring.level,
+        {
+          fetchCount: rule.diagnostics[0]?.fetchCount,
+          isWaterfall: rule.diagnostics[0]?.isWaterfall,
+          layoutDepth,
+        }
+      ) as keyof typeof categories;
+
+      const catMap = categories[catName] || categories["💡 OPTIMIZATION OPPORTUNITIES"];
+      if (!catMap.has(group.file)) {
+        catMap.set(group.file, []);
+      }
+      catMap.get(group.file)!.push(rule);
+    }
+  }
+
+  const categoryOrder = [
+    "🚫 ARCHITECTURAL VIOLATIONS",
+    "⚠️ PERFORMANCE RISKS",
+    "💡 OPTIMIZATION OPPORTUNITIES"
+  ];
+
+  for (const catName of categoryOrder) {
+    const catMap = categories[catName as keyof typeof categories];
+    if (!catMap || catMap.size === 0) continue;
+    let catColor = "\x1b[35m";
+    if (catName.includes("VIOLATIONS")) {
+      catColor = "\x1b[31m";
+    } else if (catName.includes("RISKS")) {
+      catColor = "\x1b[33m";
+    } else {
+      catColor = "\x1b[36m";
+    }
+    output += `\n\x1b[1m${catColor}=================================\n${catName}\n=================================\x1b[0m\n\n`;
+
+    const files = Array.from(catMap.keys()).sort((a, b) => {
+      const rankA = getFileRank(a);
+      const rankB = getFileRank(b);
+      if (rankA !== rankB) return rankA - rankB;
+      return a.localeCompare(b);
+    });
+
+    for (const file of files) {
+      let displayPath = path.relative(process.cwd(), file).replace(/\\/g, "/");
+      if (displayPath.startsWith("stress-test/app/")) {
+        displayPath = displayPath.substring("stress-test/app/".length);
+      } else if (displayPath.startsWith("stress-test/")) {
+        displayPath = displayPath.substring("stress-test/".length);
+      }
+      output += `\x1b[1m${displayPath}\x1b[0m\n`;
+      const rulesList = catMap.get(file)!;
+      for (let i = 0; i < rulesList.length; i++) {
+        const rule = rulesList[i]!;
+        const isLast = i === rulesList.length - 1;
+        const prefix = isLast ? " └─ " : " ├─ ";
+        
+        const shortLabel = getRuleShortLabel(rule.ruleId, rule.affects, rule.message);
+        const dl = rule.precomputed.displayLevel;
+        let color = "\x1b[36m";
+        if (dl === "BLOCKER") {
+          color = "\x1b[31m";
+        } else if (dl === "WARNING") {
+          color = "\x1b[33m";
+        }
+
+        output += `${prefix}${color}${shortLabel}\x1b[0m\n`;
+      }
+      output += `\n`;
+    }
+  }
+  output += `\n`;
+
+  // 2b. Render each violation block
+  for (const group of groupedDiagnostics) {
+    output += `\n\x1b[1mFile: ${group.file}\x1b[0m\n`;
+
+    for (const rule of group.rules) {
+      const { ruleId, affects, lineDetails, diagnostics: ruleDiags, precomputed } = rule;
+      const { displayLevel, severityColor, scoring, targetLine, depPath, executionGraph, codeframe, causeText, boundaryLabel, resolved, spec, confidence, mode } = precomputed;
+      const validity = spec?.phaseCorrectness?.[resolved.phase] ?? "invalid";
 
       const titleSuffix = affects.length > 0 ? ` [${affects.join(", ")}]` : "";
       const ruleName = spec?.name ?? ruleId;
 
-      // Print Violation header with confidence score
-      output += `\n  ${severityColor}[${levelStr}]\x1b[0m \x1b[1m${ruleId}: ${ruleName}${titleSuffix}\x1b[0m  (Confidence: ${(confidence * 100).toFixed(0)}% — ${mode}) at ${group.file}:${targetLine}\n`;
+      // Print Violation header
+      output += `\n  ${severityColor}[${displayLevel}]\x1b[0m \x1b[1m${ruleId}: ${ruleName}${titleSuffix}\x1b[0m  (Confidence: ${(confidence * 100).toFixed(0)}% — ${mode}) at ${group.file}:${targetLine}\n`;
 
       // Print Propagated Targets if any
       const firstDiag = ruleDiags[0];
@@ -218,11 +512,29 @@ export function renderGroupedDiagnostics(diagnostics: Diagnostic[]): string {
         }
       }
 
-      // Format sequence output
+      const normPath = group.file.replace(/\\/g, "/");
+      const appIdx = normPath.indexOf("/app/");
+      let layoutDepth = 0;
+      if (appIdx !== -1) {
+        const relPath = normPath.substring(appIdx + 5);
+        const segments = relPath.split("/").filter((s) => s.length > 0);
+        layoutDepth = segments
+          .slice(0, -1)
+          .filter((s) => !s.startsWith("(") && !s.startsWith("@")).length;
+      }
+      const auditMeta = getRuleAuditMetadata(ruleId, scoring.level, {
+        fetchCount: ruleDiags[0]?.fetchCount,
+        isWaterfall: ruleDiags[0]?.isWaterfall,
+        layoutDepth,
+      });
+
       output += `\n`;
       output += `    Boundary:          ${boundaryLabel}\n`;
       output += `    Execution Phase:   ${resolved.phase} (${validity} in this phase — Stage ${resolved.stageOrder} — ${resolved.stageLabel})\n`;
       output += `    Runtime:           ${resolved.runtime}\n`;
+      output += `    Audit Class:       ${auditMeta.category}\n`;
+      output += `    Fix Effort:        ${auditMeta.effort} mins\n`;
+      output += `    Fix Impact:        ${auditMeta.impact}\n`;
 
       const lineParts = lineDetails.map((ld) => {
         const filtered = ld.affects.filter((a) => a && a !== "unknown symbols");
@@ -230,8 +542,8 @@ export function renderGroupedDiagnostics(diagnostics: Diagnostic[]): string {
       });
       output += `    Location:          ${lineParts.length > 0 ? lineParts.join(", ") : "N/A"}\n`;
 
-      // ── Impact Scores block ────────────────────────────────────────────────
-      const imp = (scoring as any).impactScores;
+      // Impact Scores
+      const imp = scoring.impactScores;
       if (imp) {
         output += `\n    Impact Scores:\n`;
         output += `      - Rendering:    ${imp.rendering.toFixed(1).padStart(4)} / 10\n`;
@@ -240,9 +552,9 @@ export function renderGroupedDiagnostics(diagnostics: Diagnostic[]): string {
         output += `      - Security:     ${imp.security.toFixed(1).padStart(4)} / 10\n`;
         output += `      - Cache:        ${(imp.cache || 0).toFixed(1).padStart(4)} / 10\n`;
         output += `      - Runtime:      ${(imp.runtime || 0).toFixed(1).padStart(4)} / 10\n`;
-        output += `\n    ${severityColor}Overall Severity:  ${levelStr} (${scoring.score.toFixed(2)})\x1b[0m\n`;
+        output += `\n    ${severityColor}Overall Severity:  ${displayLevel} (${scoring.score.toFixed(2)})\x1b[0m\n`;
       } else {
-        output += `    Severity Rating:   ${levelStr} (${scoring.score.toFixed(2)})\n`;
+        output += `    Severity Rating:   ${displayLevel} (${scoring.score.toFixed(2)})\n`;
       }
 
       output += `\n    Dependency Path:\n`;
@@ -281,19 +593,22 @@ export function renderGroupedDiagnostics(diagnostics: Diagnostic[]): string {
       output += `\n    Architectural Reasoning:\n`;
       output += `      Why it matters:\n`;
       output += `        ${spec?.message.ruleExplanation ?? "No reasoning context."}\n`;
-      output += `      Boundary compliance:\n`;
-      output += `        Violates ${boundaryLabel} — ${causeText}\n`;
+      if (boundaryLabel === "Streaming Opportunity") {
+        output += `      Streaming compliance:\n`;
+        output += `        Opportunity — ${causeText}\n`;
+      } else {
+        output += `      Boundary compliance:\n`;
+        output += `        Violates ${boundaryLabel} — ${causeText}\n`;
+      }
 
       if (spec?.fix) {
         output += `\n    Fix Recommendations:\n`;
-
-        // ── Fix Confidence badge ────────────────────────────────────────────
         const fc = spec.fix.confidence;
         if (fc) {
           const fcColor =
-            fc === "HIGH"   ? "\x1b[32m" :   // green
-            fc === "MEDIUM" ? "\x1b[33m" :   // yellow
-                              "\x1b[31m";    // red for LOW
+            fc === "HIGH"   ? "\x1b[32m" :
+            fc === "MEDIUM" ? "\x1b[33m" :
+                              "\x1b[31m";
           output += `      Fix Confidence:  ${fcColor}${fc}\x1b[0m`;
           if (spec.fix.confidenceReason) {
             output += `  \x1b[2m← ${spec.fix.confidenceReason}\x1b[0m`;
@@ -325,6 +640,111 @@ export function renderGroupedDiagnostics(diagnostics: Diagnostic[]): string {
     }
   }
 
+  // 2c. Numbered Fix Order Priority section
+  interface FixOrderItem {
+    file: string;
+    ruleId: string;
+    message: string;
+    targetLine: number;
+    displayLevel: "BLOCKER" | "WARNING" | "INFO";
+    primaryFix?: string;
+    effort: number;
+    impact: "Huge" | "Medium" | "Small";
+    roiScore: number;
+    severityScore: number;
+  }
+
+  const fixOrderItems: FixOrderItem[] = [];
+  for (const group of groupedDiagnostics) {
+    for (const rule of group.rules) {
+      const dl = rule.precomputed.displayLevel;
+
+      const normPath = group.file.replace(/\\/g, "/");
+      const appIdx = normPath.indexOf("/app/");
+      let layoutDepth = 0;
+      if (appIdx !== -1) {
+        const relPath = normPath.substring(appIdx + 5);
+        const segments = relPath.split("/").filter((s) => s.length > 0);
+        layoutDepth = segments
+          .slice(0, -1)
+          .filter((s) => !s.startsWith("(") && !s.startsWith("@")).length;
+      }
+      const auditMeta = getRuleAuditMetadata(rule.ruleId, rule.precomputed.scoring.level, {
+        fetchCount: rule.diagnostics[0]?.fetchCount,
+        isWaterfall: rule.diagnostics[0]?.isWaterfall,
+        layoutDepth,
+      });
+
+      const impactValue =
+        auditMeta.impact === "Huge" ? 10.0 :
+        auditMeta.impact === "Medium" ? 5.0 :
+        2.0;
+      const roiScore = impactValue / auditMeta.effort;
+
+      fixOrderItems.push({
+        file: group.file,
+        ruleId: rule.ruleId,
+        message: rule.message,
+        targetLine: rule.precomputed.targetLine,
+        displayLevel: dl,
+        primaryFix: rule.precomputed.primaryFix,
+        effort: auditMeta.effort,
+        impact: auditMeta.impact,
+        roiScore,
+        severityScore: rule.precomputed.scoring.score,
+      });
+    }
+  }
+
+  fixOrderItems.sort((a, b) => {
+    if (b.roiScore !== a.roiScore) {
+      return b.roiScore - a.roiScore;
+    }
+    if (b.severityScore !== a.severityScore) {
+      return b.severityScore - a.severityScore;
+    }
+    const rankA = getFileRank(a.file);
+    const rankB = getFileRank(b.file);
+    if (rankA !== rankB) {
+      return rankA - rankB;
+    }
+    const fileCompare = a.file.localeCompare(b.file);
+    if (fileCompare !== 0) {
+      return fileCompare;
+    }
+    return a.targetLine - b.targetLine;
+  });
+
+  output += `\n\x1b[1m=========================================\n`;
+  output += `🛠️ RECOMMENDED FIX ORDER PRIORITY\n`;
+  output += `=========================================\x1b[0m\n`;
+
+  if (fixOrderItems.length === 0) {
+    output += `No fixes required.\n`;
+  } else {
+    fixOrderItems.forEach((item, index) => {
+      let emoji = "🔵 [INFO]";
+      let color = "\x1b[36m";
+      if (item.displayLevel === "BLOCKER") {
+        emoji = "🔴 [BLOCKER]";
+        color = "\x1b[31m";
+      } else if (item.displayLevel === "WARNING") {
+        emoji = "🟡 [WARNING]";
+        color = "\x1b[33m";
+      }
+
+      output += `${index + 1}. ${color}${emoji}\x1b[0m \x1b[1m${item.file}:${item.targetLine}\x1b[0m — ${item.ruleId}\n`;
+      output += `   👉 \x1b[2m${item.message}\x1b[0m\n`;
+      output += `   📈 \x1b[32mROI Score: ${item.roiScore.toFixed(2)} (Impact: ${item.impact}, Effort: ${item.effort}m)\x1b[0m\n`;
+      if (item.primaryFix) {
+        output += `   💡 Fix: ${item.primaryFix.trim()}\n`;
+      } else {
+        output += `   💡 Fix: Review rule specifications for details.\n`;
+      }
+      output += `\n`;
+    });
+  }
+
   // ── Global Project Score ───────────────────────────────────────────────────
   const graph = getLastGraph();
   const nodes = getLastGraphNodes();
@@ -341,7 +761,6 @@ export function renderGroupedDiagnostics(diagnostics: Diagnostic[]): string {
     fileDiagnosticsMap.get(d.file)!.push(d);
   }
 
-  // Iterate over all nodes in the graph (or fallback to diagnostics if graph is not built)
   const allPaths = nodes ? Array.from(nodes.keys()) : Array.from(fileDiagnosticsMap.keys());
   
   for (const filePath of allPaths) {
@@ -365,6 +784,34 @@ export function renderGroupedDiagnostics(diagnostics: Diagnostic[]): string {
       const scoring = spec
         ? calculateSeverityScore(d.id, resolved.phase, confidence, 1, isGuarded)
         : { score: 5.0 };
+
+      if (spec) {
+        let finalScore = scoring.score;
+        if (d.id === "RO-005") {
+          finalScore = applyContextualScoreOverride(d.id, finalScore, {
+            fetchCount: d.fetchCount,
+            isWaterfall: d.isWaterfall,
+          });
+        } else if (d.id === "RO-006") {
+          finalScore = applyContextualScoreOverride(d.id, finalScore, {
+            isCriticalLayoutPath: (d as any).isCriticalLayoutPath,
+          });
+        } else if (d.id === "DYNAMIC_LAYOUT_IMPACT") {
+          const normFile = filePath.replace(/\\/g, "/");
+          const appIdx = normFile.indexOf("/app/");
+          let layoutDepth = 0;
+          if (appIdx !== -1) {
+            const relPath = normFile.substring(appIdx + 5);
+            const segments = relPath.split("/").filter(s => s.length > 0);
+            layoutDepth = segments.slice(0, -1).filter(
+              s => !s.startsWith("(") && !s.startsWith("@")
+            ).length;
+          }
+          finalScore = applyContextualScoreOverride(d.id, finalScore, { layoutDepth });
+        }
+        scoring.score = finalScore;
+      }
+
       fileScore += scoring.score;
     }
     fileScore = Math.min(10.0, fileScore);

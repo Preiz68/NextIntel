@@ -34,14 +34,17 @@ import { noDynamicApisInStaticRoutes } from "./rendering/no-dynamic-apis-in-stat
 import { noUseCacheInClientComponents } from "./rendering/no-use-cache-in-client-components.js";
 import { noInlineServerActionsInClientComponents } from "./rendering/no-inline-server-actions-in-client-components.js";
 import { reactRenderPurity } from "./rendering/react-render-purity.js";
+import { noLargeDataImportsInClient } from "./rendering/no-large-data-imports-in-client.js";
 
 // ── Data Layer Rules ─────────────────────────────────────────────────────────
 import { fetchCacheConfig } from "./data/fetch-cache-config.js";
 import { revalidationCacheLifetime } from "./data/revalidation-cache-lifetime.js";
+import { dataFetchingPatterns } from "./data/data-fetching-patterns.js";
 
 // ── Architecture Layer Rules ──────────────────────────────────────────────────
 import { noCircularDeps } from "./architecture/no-circular-deps.js";
 import { routingValidFiles } from "./architecture/routing-valid-files.js";
+import { routingPatterns } from "./architecture/routing-patterns.js";
 import { runtimeExecutionLimits } from "./architecture/runtime-execution-limits.js";
 import { middlewareRuntimeConstraints } from "./architecture/middleware-runtime-constraints.js";
 import { serverActionsAuth } from "./architecture/server-actions-auth.js";
@@ -54,7 +57,6 @@ import { noMixedBarrelFiles } from "./architecture/no-mixed-barrel-files.js";
 import { serverActionsLexicalClosures } from "./architecture/server-actions-lexical-closures.js";
 
 // ── Production Layer Rules ───────────────────────────────────────────────────
-import { noUnoptimizedFetch } from "./production/no-unoptimized-fetch.js";
 import { securityNoPublicSecrets } from "./production/security-no-public-secrets.js";
 import { observabilityTelemetry } from "./production/observability-telemetry.js";
 
@@ -78,14 +80,17 @@ export const rules = [
   noUseCacheInClientComponents,
   noInlineServerActionsInClientComponents,
   reactRenderPurity,
+  noLargeDataImportsInClient,
 
   // Data Layer
   fetchCacheConfig,
   revalidationCacheLifetime,
+  dataFetchingPatterns,
 
   // Architecture Layer
   noCircularDeps,
   routingValidFiles,
+  routingPatterns,
   runtimeExecutionLimits,
   middlewareRuntimeConstraints,
   serverActionsAuth,
@@ -98,7 +103,6 @@ export const rules = [
   serverActionsLexicalClosures,
 
   // Production Layer
-  noUnoptimizedFetch,
   securityNoPublicSecrets,
   observabilityTelemetry,
 ];

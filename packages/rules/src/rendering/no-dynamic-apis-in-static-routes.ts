@@ -59,7 +59,12 @@ export const noDynamicApisInStaticRoutes: Rule = {
       if (!isServer) continue;
 
       const filePath = analysis.filePath;
-      const hasDirectTriggers = analysis.rendering.triggers.length > 0;
+      const hasDirectTriggers = analysis.rendering.triggers.some(t =>
+        t === "cookies" || t === "headers" || t === "draftMode" || t === "connection" || t === "unstable_noStore"
+      );
+
+      const base = path.basename(filePath).toLowerCase();
+      const isLayout = base.startsWith("layout.");
 
       if (isPageOrLayout(filePath)) {
         let content = "";
@@ -69,6 +74,10 @@ export const noDynamicApisInStaticRoutes: Rule = {
           // ignore
         }
         const isForceStatic = content.includes("force-static");
+
+        if (isLayout && !isForceStatic) {
+          continue;
+        }
 
         if (hasDirectTriggers) {
           // Case 1: Dynamic APIs in layout/page directly

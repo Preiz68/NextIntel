@@ -6,6 +6,60 @@
   "constraints": [
     {
       "id": "DF-001",
+      "title": "Explicit Fetch Cache Strategy Missing",
+      "problem": "In the current Next.js model, fetch() requests are not cached by default. Developers who assume all fetch calls are cached (from older documentation) will serve uncached, fresh data on every request, eliminating the performance benefits of static prerendering.",
+      "whyItMatters": "Without explicit caching, every incoming request triggers a fresh fetch to the upstream data source. At scale, this means O(requests * data_sources) upstream calls, increasing latency, cost, and the risk of rate-limiting by external APIs. Prerendering opportunities are lost when data is not cacheable.",
+      "severity": "warning",
+      "forbiddenPatterns": [
+        "Assuming fetch() is cached without explicitly setting cache: 'force-cache' or next.revalidate",
+        "Fetching the same data in multiple components without using React.cache() for deduplication",
+        "Omitting 'use cache' directive when data is suitable for caching across requests",
+        "Using unstable_cache without understanding its invalidation semantics"
+      ],
+      "allowedPatterns": [
+        "fetch(url, { cache: 'force-cache' }) for data that rarely changes",
+        "fetch(url, { next: { revalidate: 3600 } }) for time-based revalidation (ISR semantics)",
+        "fetch(url, { next: { tags: ['tag'] } }) combined with revalidateTag() for on-demand invalidation",
+        "'use cache' directive with cacheLife() for both data and UI component caching",
+        "unstable_cache() for ORM/database queries in the legacy model",
+        "React.cache() for per-request memoization of non-fetch data sources"
+      ],
+      "productionRisks": [
+        "Excessive upstream API calls leading to rate limiting",
+        "High database load from uncached queries",
+        "Increased latency for every page request",
+        "Higher infrastructure costs",
+        "Loss of static prerendering benefits"
+      ],
+      "architectureImplications": [
+        "Every data fetch in a Server Component should have an explicit caching decision",
+        "Shared data (fetched in multiple components) must use React.cache() or 'use cache' to deduplicate",
+        "Static content should be fully prerendered; dynamic content should be wrapped in Suspense"
+      ],
+      "optimizationGuidance": [
+        "Classify all data as: static (cache indefinitely), time-sensitive (ISR with revalidate), user-specific (no cache or short cache with tags), or real-time (no cache with Suspense streaming)",
+        "Use 'use cache' with cacheLife('hours') or cacheLife('days') for content that changes infrequently"
+      ],
+      "quickFixes": [
+        "Add { cache: 'force-cache' } to fetch calls for stable data",
+        "Add { next: { revalidate: 3600 } } for hourly revalidation",
+        "Add 'use cache' to data functions or components that should be cached"
+      ],
+      "architectureSuggestions": [
+        "Establish a team convention: every data-fetching function must document its cache strategy in a comment",
+        "Create a central data access layer where caching decisions are co-located with the data fetching logic"
+      ],
+      "examples": {
+        "invalid": [
+          "export async function getProducts() { return fetch('https://api.example.com/products').then(r => r.json()) } // Uncached, runs on every request"
+        ],
+        "valid": [
+          "export async function getProducts() { 'use cache'; cacheLife('hours'); cacheTag('products'); return fetch('https://api.example.com/products').then(r => r.json()) }"
+        ]
+      }
+    },
+    {
+      "id": "DF-008",
       "title": "Fetch Data in Server Components — Avoid Client-Side Initial Data Loading",
       "problem": "Fetching initial page data in Client Components via useEffect or third-party libraries (SWR, TanStack Query) on mount creates a client-side waterfall: the HTML loads, JavaScript executes, then the data fetch begins, resulting in a blank or skeleton state that users must wait through.",
       "whyItMatters": "Server Components can fetch data before sending any HTML to the browser. By the time the user sees the page, data is already rendered. Client-side initial data fetching means users always see a loading state on first visit, degrading LCP and perceived performance. It also prevents static prerendering of the data.",
