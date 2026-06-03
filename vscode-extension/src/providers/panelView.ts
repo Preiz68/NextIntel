@@ -274,9 +274,12 @@ export function buildPanelHtml(
     }
 
     .logo {
-      font-size: 22px;
-      line-height: 1;
-      filter: drop-shadow(0 0 8px rgba(88,166,255,0.6));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      flex-shrink: 0;
     }
 
     .brand {
@@ -555,7 +558,19 @@ export function buildPanelHtml(
 <body>
 
   <header class="top-bar">
-    <div class="logo">⚡</div>
+    <div class="logo">
+      <svg viewBox="0 0 180 180" width="22" height="22" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="90" cy="90" r="88" fill="var(--bg)" stroke="var(--border)" stroke-width="4"/>
+        <path d="M149.508 157.52L69.142 54H54v72h12.142V67.859l66.906 86.29a89.379 89.379 0 0016.46-16.629z" fill="var(--text)"/>
+        <rect x="115" y="54" width="12" height="72" fill="url(#paint0_linear_logo)"/>
+        <defs>
+          <linearGradient id="paint0_linear_logo" x1="121" y1="54" x2="121" y2="126" gradientUnits="userSpaceOnUse">
+            <stop stop-color="var(--text)"/>
+            <stop offset="1" stop-color="var(--bg)" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+      </svg>
+    </div>
     <div class="brand">Next<span>Intel</span></div>
     <div class="summary-chips">${summaryParts.join("")}</div>
   </header>

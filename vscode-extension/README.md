@@ -11,12 +11,22 @@
 *   **Live Diagnostics**: Get immediate feedback via red squiggles as you save or switch files.
 *   **Smart Quick-Fixes**: When a boundary violation is detected, a 💡 lightbulb appears. One click adds the `"use client";` directive to the top of your file.
 
+### 📖 Rich Code Examples
+*   **Isomorphic Code Examples**: Every single rule includes detailed valid and invalid code snippets showing exactly what is wrong and how to refactor it.
+*   **Multiple Solution Scenarios**: Complex rules include multiple example sequences inside the Issue Detail Panel to cover varying code patterns.
+
+### 🎯 Advanced Analysis Rules (App Router + Next.js 15)
+*   **Dynamic `revalidatePath` Checking (`RV-003`)**: Flags dynamic segment cache purges missing the target type parameter.
+*   **Component Caching Suggestion (`RE-005`)**: Recommends Next.js 15 `'use cache'` directive to memoize expensive operations.
+*   **`optimizePackageImports` Config Guard (`PF-007`)**: Promotes tree-shaking for heavy libraries inside `next.config.js`.
+*   **Server Leak Boundary Guard (`SC-SECURITY-002`)**: Ensures sensitive data-access files explicitly import `'server-only'`.
+
 ### ⚡ Performance-First Design
 *   **Debounced Scanning**: Intelligent analysis that waits for you to finish typing/saving before running, keeping your editor responsive.
 *   **AST-Powered**: Uses a custom-built, deep-analysis engine (powered by `ts-morph`) that understands your code structure better than a standard linter.
 
-### 📊 Health Scoring (Coming Soon)
-*   **Intelligence Score**: A real-time health score of your project’s architecture, deductucting points for critical errors and warnings.
+### 📊 Health Scoring
+*   **Intelligence Score**: A real-time health score of your project’s architecture, deducting points for critical errors and warnings.
 
 ---
 

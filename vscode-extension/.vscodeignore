@@ -27,3 +27,7 @@ eslint.config.mjs
 # Docs that aren't the main README
 vsc-extension-quickstart.md
 CHANGELOG.md
+
+# Package archives
+*.vsix
+**/*.vsix
