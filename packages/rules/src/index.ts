@@ -35,6 +35,7 @@ import { noUseCacheInClientComponents } from "./rendering/no-use-cache-in-client
 import { noInlineServerActionsInClientComponents } from "./rendering/no-inline-server-actions-in-client-components.js";
 import { reactRenderPurity } from "./rendering/react-render-purity.js";
 import { noLargeDataImportsInClient } from "./rendering/no-large-data-imports-in-client.js";
+import { useCacheDirective } from "./rendering/use-cache-directive.js";
 
 // ── Data Layer Rules ─────────────────────────────────────────────────────────
 import { fetchCacheConfig } from "./data/fetch-cache-config.js";
@@ -55,10 +56,12 @@ import { serverActionsVsHandlers } from "./architecture/server-actions-vs-handle
 import { serverActionsBrowserApi } from "./architecture/server-actions-browser-api.js";
 import { noMixedBarrelFiles } from "./architecture/no-mixed-barrel-files.js";
 import { serverActionsLexicalClosures } from "./architecture/server-actions-lexical-closures.js";
+import { serverOnlyBoundary } from "./architecture/server-only-boundary.js";
 
 // ── Production Layer Rules ───────────────────────────────────────────────────
 import { securityNoPublicSecrets } from "./production/security-no-public-secrets.js";
 import { observabilityTelemetry } from "./production/observability-telemetry.js";
+import { optimizePackageImports } from "./production/optimize-package-imports.js";
 
 export const rules = [
   // Rendering Layer
@@ -81,6 +84,7 @@ export const rules = [
   noInlineServerActionsInClientComponents,
   reactRenderPurity,
   noLargeDataImportsInClient,
+  useCacheDirective,
 
   // Data Layer
   fetchCacheConfig,
@@ -101,8 +105,10 @@ export const rules = [
   serverActionsBrowserApi,
   noMixedBarrelFiles,
   serverActionsLexicalClosures,
+  serverOnlyBoundary,
 
   // Production Layer
   securityNoPublicSecrets,
   observabilityTelemetry,
+  optimizePackageImports,
 ];

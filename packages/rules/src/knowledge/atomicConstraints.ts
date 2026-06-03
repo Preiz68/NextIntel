@@ -1031,6 +1031,84 @@ export const ATOMIC_CONSTRAINTS: Record<string, AtomicConstraint> = {
       "Keep async operations independent and bundle them using Promise.all() or Promise.allSettled()."
     ]
   },
+  "RV-003": {
+    id: "RV-003",
+    semanticEvent: "DYN_REVAL_PATH_MISMATCH",
+    phase: "render",
+    concept: "revalidation",
+    problem: "revalidatePath() is called on a dynamic route segment without specifying the type argument.",
+    whyItMatters: "Next.js treats single-argument revalidatePath() calls as literal string paths. When invalidating dynamic routes (e.g. /blog/[slug]), you must provide the second 'type' argument ('page' or 'layout') or the cache will fail to clear.",
+    forbiddenConditions: [
+      "revalidatePath('/blog/[slug]')"
+    ],
+    detectionStrategy: ["Identify revalidatePath() calls targeting paths with dynamic brackets that omit the 'page' or 'layout' second parameter."],
+    productionRisks: [
+      "Stale dynamic routes served indefinitely to users after mutations."
+    ],
+    quickFix: [
+      "Add the 'page' or 'layout' string literal as the second argument: revalidatePath('/blog/[slug]', 'page')"
+    ],
+    architectureGuidance: [
+      "Always provide the second 'type' parameter to revalidatePath when targeting dynamic routes to ensure proper cache invalidation."
+    ]
+  },
+  "RE-005": {
+    id: "RE-005",
+    semanticEvent: "USE_CACHE_DIRECTIVE_SUGGESTION",
+    phase: "render",
+    concept: "rendering",
+    problem: "Server Components or data utilities perform expensive queries or fetches but do not use component-level caching.",
+    whyItMatters: "Component-level caching with Next.js 15 'use cache' directive enables memoizing outputs of functions or components at the tree level, avoiding repeating calculations on subsequent requests.",
+    forbiddenConditions: [],
+    detectionStrategy: ["Find async functions performing fetches or database requests in Server Components that have no caching wrappers."],
+    productionRisks: [
+      "Unnecessary compute load and slow rendering performance under high traffic."
+    ],
+    quickFix: [
+      "Add the 'use cache' directive to cache component outputs."
+    ],
+    architectureGuidance: [
+      "Leverage 'use cache' for expensive backend-dependent renders to maximize static serving benefits."
+    ]
+  },
+  "PF-007": {
+    id: "PF-007",
+    semanticEvent: "OPTIMIZE_PACKAGE_IMPORTS_MISSING",
+    phase: "render",
+    concept: "performance",
+    problem: "Heavy interactive libraries are imported client-side without enabling optimizePackageImports config.",
+    whyItMatters: "Next.js can automatically tree-shake large libraries like lucide-react, react-icons, and radix-ui components at build-time using optimizePackageImports. Without this config, build sizes and times can swell.",
+    forbiddenConditions: [],
+    detectionStrategy: ["Identify client files importing from icon/UI libraries where next.config has no optimizePackageImports configured."],
+    productionRisks: [
+      "Larger clientside chunks, degraded Core Web Vitals (INP/TTI), and longer build compilation times."
+    ],
+    quickFix: [
+      "Add the package to experimental.optimizePackageImports in next.config.js."
+    ],
+    architectureGuidance: [
+      "Ensure all large, distributed UI packages are optimized in next.config to keep bundle sizes under budget."
+    ]
+  },
+  "SC-SECURITY-002": {
+    id: "SC-SECURITY-002",
+    semanticEvent: "SERVER_ONLY_IMPORT_MISSING",
+    phase: "render",
+    concept: "security",
+    problem: "Backend utility, DB initialization, or secret configuration files do not import the 'server-only' package.",
+    whyItMatters: "Accidentally importing backend-only code or database initialization files into Client Components leaks credentials, increases bundle sizes, and throws build compile errors. Explicitly importing 'server-only' protects this boundary.",
+    forbiddenConditions: [],
+    detectionStrategy: ["Identify backend configuration/DB modules that omit the 'server-only' boundary package."],
+    productionRisks: [
+      "Credential leakage to client-side bundles, runtime errors, and security compliance failure."
+    ],
+    quickFix: [
+      "Add import 'server-only'; at the top of the backend utility file."
+    ],
+    architectureGuidance: [
+      "Enforce server-only boundary annotations across all data access layer (DAL) and utility modules."
+    ]
+  },
   "CC-HYDRATION-ABUSE-001": {
     id: "CC-HYDRATION-ABUSE-001",
     semanticEvent: "CLIENT_GRAPH_LEAK",

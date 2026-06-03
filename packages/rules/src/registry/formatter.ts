@@ -361,6 +361,18 @@ function getRuleShortLabel(ruleId: string, affects: string[], message: string): 
   if (id.includes("RE-003-OPT")) {
     return "Optimization Opportunity: Known finite routes can use generateStaticParams()";
   }
+  if (id.includes("RV-003")) {
+    return "Dynamic revalidatePath Missing Type Parameter";
+  }
+  if (id.includes("RE-005")) {
+    return "Leverage Next.js 15 'use cache' for Component Caching";
+  }
+  if (id.includes("PF-007")) {
+    return "Optimize Package Imports in next.config";
+  }
+  if (id.includes("SC-SECURITY-002")) {
+    return "Server-only Module Boundary Guard";
+  }
   if (id.includes("RE-003")) {
     return "Missing generateStaticParams()";
   }

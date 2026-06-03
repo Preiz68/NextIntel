@@ -1165,6 +1165,64 @@ export const routingPatterns: Rule = {
       }
     }
 
+    // ── RV-003: Dynamic revalidatePath Missing Type Parameter ────────────────
+    for (const analysis of context.analyses) {
+      let content = "";
+      try {
+        content = readFileSync(analysis.filePath, "utf-8");
+      } catch {
+        continue;
+      }
+
+      if (!content.includes("revalidatePath")) continue;
+
+      try {
+        const project = new Project();
+        const sourceFile = project.createSourceFile("_temp_rv003.ts", content);
+        const calls = sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression);
+
+        for (const call of calls) {
+          if (call.getExpression().getText() === "revalidatePath") {
+            const args = call.getArguments();
+            if (args.length > 0) {
+              const firstArg = args[0];
+              const isStaticLiteral = firstArg.isKind(SyntaxKind.StringLiteral) || firstArg.isKind(SyntaxKind.NoSubstitutionTemplateLiteral);
+              const firstArgText = firstArg.getText();
+              const isDynamic = !isStaticLiteral || firstArgText.includes("[") || firstArgText.includes("]");
+              if (isDynamic) {
+                const hasSecondArg = args.length >= 2;
+                const secondArgText = hasSecondArg ? args[1].getText().replace(/['"`]/g, "").trim() : "";
+                if (secondArgText !== "page" && secondArgText !== "layout") {
+                  const line = call.getStartLineNumber();
+                  diagnostics.push({
+                    file: analysis.filePath,
+                    line,
+                    severity: "warning",
+                    ruleId: this.id,
+                    id: "RV-003",
+                    message: `Dynamic revalidatePath Missing Type Parameter: revalidatePath() is called on a dynamic route segment '${firstArgText}' without specifying the type argument ('page' or 'layout').`,
+                    whyItMatters: "Next.js treats single-argument revalidatePath() calls as literal string paths. When invalidating dynamic routes (e.g. /blog/[slug]), you must provide the second 'type' argument ('page' or 'layout') or the cache will fail to clear.",
+                    quickFixes: [
+                      "Add the 'page' or 'layout' string literal as the second argument: revalidatePath('/blog/[slug]', 'page')"
+                    ],
+                    architectureSuggestions: [
+                      "Always provide the second 'type' parameter to revalidatePath when targeting dynamic routes to ensure proper cache invalidation."
+                    ],
+                    optimizationGuidance: [],
+                    productionRisks: [
+                      "Stale dynamic routes served indefinitely to users after mutations."
+                    ]
+                  });
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        // ignore parsing errors
+      }
+    }
+
     return diagnostics;
   },
 };

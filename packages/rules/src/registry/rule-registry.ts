@@ -1612,6 +1612,141 @@ export const RULE_REGISTRY: Record<string, RuleSpec> = {
     detectionMode: "deterministic",
   },
 
+  "RV-003": {
+    id: "RV-003",
+    name: "Dynamic revalidatePath Missing Type Parameter",
+    category: "DYNAMIC_RENDER_TRIGGER",
+    severityBase: 7,
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "invalid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "invalid",
+      BUNDLER_RESOLUTION: "valid",
+    },
+    triggers: { patterns: [/\brevalidatePath\b/] },
+    boundary: "RSC_RENDER",
+    message: {
+      cause: "revalidatePath() is called on a dynamic route segment without specifying the second 'type' argument.",
+      impact: "Next.js treats it as a literal string path rather than matching dynamic route parameters, which fails to invalidate cached dynamic segments (e.g. /blog/[slug]).",
+      ruleExplanation: "Dynamic route segment invalidation via revalidatePath requires an explicit type parameter ('page' or 'layout') to tell Next.js to match dynamic brackets.",
+    },
+    fix: {
+      primary: "Add the 'page' or 'layout' parameter to revalidatePath: revalidatePath('/blog/[slug]', 'page')",
+      confidence: "HIGH",
+      confidenceReason: "Official Next.js documentation states type argument is mandatory for dynamic segment invalidation.",
+      architecture: "Ensure revalidation points match the dynamic layout hierarchy structure.",
+      alternatives: [],
+    },
+    severity: "HIGH",
+    kind: "performance",
+    confidence: 1.0,
+    detectionMode: "deterministic",
+  },
+
+  "RE-005": {
+    id: "RE-005",
+    name: "Leverage Next.js 15 'use cache' for Component Caching",
+    category: "DYNAMIC_RENDER_TRIGGER",
+    severityBase: 3,
+    phases: ["RSC_RENDER"],
+    phaseCorrectness: {
+      RSC_RENDER: "valid",
+      CLIENT_RENDER: "valid",
+      HYDRATION: "valid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "valid",
+    },
+    triggers: { patterns: [/async\s+function/, /export\s+default\s+async/] },
+    boundary: "RSC_RENDER",
+    message: {
+      cause: "Server Component or data query helper performs network/database access but lacks component-level caching.",
+      impact: "Every page render requests database rows or external assets dynamically, adding compute overhead.",
+      ruleExplanation: "Using Next.js 15 'use cache' enables memoization of outputs for expensive data-fetching functions.",
+    },
+    fix: {
+      primary: "Add the 'use cache' directive at the top of the component or helper function body.",
+      confidence: "MEDIUM",
+      confidenceReason: "Component-level caching is highly effective for static/semi-static dynamic components.",
+      architecture: "Optimize the data access layer (DAL) using fine-grained server-side caching directives.",
+      alternatives: [
+        "Use unstable_cache() or React.cache() if 'use cache' directive is not enabled."
+      ],
+    },
+    severity: "LOW",
+    kind: "performance",
+    confidence: 0.90,
+    detectionMode: "heuristic",
+  },
+
+  "PF-007": {
+    id: "PF-007",
+    name: "Optimize Package Imports in next.config",
+    category: "DYNAMIC_RENDER_TRIGGER",
+    severityBase: 3,
+    phases: ["BUNDLER_RESOLUTION"],
+    phaseCorrectness: {
+      RSC_RENDER: "valid",
+      CLIENT_RENDER: "invalid",
+      HYDRATION: "invalid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "invalid",
+    },
+    triggers: { patterns: [/from\s+['"](lucide-react|react-icons|@radix-ui\/react-icons)['"]/] },
+    boundary: "CLIENT_RENDER",
+    message: {
+      cause: "Heavy icon/UI packages are imported client-side but next.config.js lacks experimental.optimizePackageImports configuration.",
+      impact: "All sub-modules of the package are bundled together, increasing initial bundle download size, TTI, and compilation build times.",
+      ruleExplanation: "optimizePackageImports config instructs Next.js compiler to tree-shake heavy components automatically.",
+    },
+    fix: {
+      primary: "Add the package to experimental.optimizePackageImports in next.config.js.",
+      confidence: "HIGH",
+      confidenceReason: "Standard Next.js package optimization technique for large distributed libraries.",
+      architecture: "Configure Next.js packagers to prune unused components at build time.",
+      alternatives: [
+        "Use deep imports (e.g. lucide-react/dist/esm/icons/...) if next.config optimization is not desired."
+      ],
+    },
+    severity: "LOW",
+    kind: "performance",
+    confidence: 0.95,
+    detectionMode: "heuristic",
+  },
+
+  "SC-SECURITY-002": {
+    id: "SC-SECURITY-002",
+    name: "Server-only Module Boundary Guard",
+    category: "DYNAMIC_RENDER_TRIGGER",
+    severityBase: 8,
+    phases: ["BUNDLER_RESOLUTION"],
+    phaseCorrectness: {
+      RSC_RENDER: "valid",
+      CLIENT_RENDER: "invalid",
+      HYDRATION: "invalid",
+      SERVER_ACTION: "valid",
+      BUNDLER_RESOLUTION: "invalid",
+    },
+    triggers: { patterns: [/\b(db|prisma|pg|drizzle|sql|knex|mysql|mongodb)\b/i] },
+    boundary: "RSC_RENDER",
+    message: {
+      cause: "Database connection initialization or credential modules do not import 'server-only'.",
+      impact: "Risk of importing backend files into client bundles, exposing credentials and causing build failures.",
+      ruleExplanation: "Importing 'server-only' raises a compile-time build error if the module is referenced client-side, enforcing a strict backend security boundary.",
+    },
+    fix: {
+      primary: "Add import 'server-only'; at the top of the server-only backend utility file.",
+      confidence: "HIGH",
+      confidenceReason: "Official React and Next.js pattern to secure backend-only execution modules.",
+      architecture: "Isolate database, API routes, and backend connectors using 'server-only' guards.",
+      alternatives: [],
+    },
+    severity: "HIGH",
+    kind: "security",
+    confidence: 0.95,
+    detectionMode: "heuristic",
+  },
 
   // ── Cache rules ─────────────────────────────────────────────────────────────
 
