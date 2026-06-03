@@ -150,10 +150,19 @@ function buildDiagCard(d: RuleDiagnostic, idx: number): string {
 
   // Code examples
   if (d.examples?.invalid?.length || d.examples?.valid?.length) {
-    const examplesHtml = [
-      d.examples?.invalid?.[0] ? codeBlock(d.examples.invalid[0], "Avoid", "bad") : "",
-      d.examples?.valid?.[0] ? codeBlock(d.examples.valid[0], "Prefer", "good") : "",
-    ].join("");
+    const invalidBlocks = (d.examples.invalid || [])
+      .map((code, idx) => {
+        const label = d.examples!.invalid!.length > 1 ? `Avoid (Example ${idx + 1})` : "Avoid";
+        return codeBlock(code, label, "bad");
+      })
+      .join("");
+    const validBlocks = (d.examples.valid || [])
+      .map((code, idx) => {
+        const label = d.examples!.valid!.length > 1 ? `Prefer (Example ${idx + 1})` : "Prefer";
+        return codeBlock(code, label, "good");
+      })
+      .join("");
+    const examplesHtml = invalidBlocks + validBlocks;
 
     sections.push(`
       <div class="section">

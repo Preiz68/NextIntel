@@ -57,7 +57,15 @@ export const useCacheDirective: Rule = {
           architectureSuggestions: constraint?.architectureSuggestions ?? [],
           optimizationGuidance: constraint?.optimizationGuidance ?? [],
           productionRisks: constraint?.productionRisks ?? [],
-          examples: constraint?.examples,
+          examples: {
+            invalid: [
+              "// ❌ Invalid: Server function performs fetches/queries without caching\nexport async function getUser(id: string) {\n  const res = await fetch(`https://api.github.com/users/${id}`);\n  return res.json();\n}"
+            ],
+            valid: [
+              "// ✅ Valid (Option 1): Leverage Next.js 15 'use cache' directive at the function scope\nexport async function getUser(id: string) {\n  \"use cache\";\n  const res = await fetch(`https://api.github.com/users/${id}`);\n  return res.json();\n}",
+              "// ✅ Valid (Option 2): Use legacy unstable_cache for query memoization\nimport { unstable_cache } from 'next/cache';\nexport const getUser = unstable_cache(async (id: string) => {\n  const res = await fetch(`https://api.github.com/users/${id}`);\n  return res.json();\n}, ['user-cache-key']);"
+            ]
+          },
         });
       }
     }

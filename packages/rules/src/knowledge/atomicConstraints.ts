@@ -1,4 +1,6 @@
 import { Diagnostic } from "../types.js";
+import { KnowledgeRegistry } from "./registry.js";
+
 
 export type SemanticEvent =
   | "RENDER_PHASE_BROWSER_API_ACCESS"
@@ -39,6 +41,10 @@ export interface AtomicConstraint {
   productionRisks: string[];
   quickFix: string[];
   architectureGuidance: string[];
+  examples?: {
+    valid: string[];
+    invalid: string[];
+  };
 }
 
 export const ATOMIC_CONSTRAINTS: Record<string, AtomicConstraint> = {
@@ -213,7 +219,15 @@ export const ATOMIC_CONSTRAINTS: Record<string, AtomicConstraint> = {
     architectureGuidance: [
       "Keep Client Components synchronous in terms of rendering signature",
       "Manage asynchronous data fetching on the client via hooks or fetch state libraries"
-    ]
+    ],
+    examples: {
+      invalid: [
+        "// ❌ Invalid: Client Component declared as an async function\n'use client';\nexport default async function UserProfile() {\n  const res = await fetch('/api/user');\n  const user = await res.json();\n  return <div>{user.name}</div>;\n}"
+      ],
+      valid: [
+        "// ✅ Valid: Keep Client Component synchronous, fetch data in a parent Server Component\n// page.tsx (Server Component)\nimport UserProfile from './user-profile';\nexport default async function Page() {\n  const res = await fetch('https://api.example.com/user');\n  const user = await res.json();\n  return <UserProfile user={user} />;\n}\n\n// user-profile.tsx (Client Component)\n'use client';\nexport default function UserProfile({ user }) {\n  return <div>{user.name}</div>;\n}"
+      ]
+    }
   },
   "CC-RUNTIME-LEAK-001": {
     id: "CC-RUNTIME-LEAK-001",
@@ -571,7 +585,15 @@ export const ATOMIC_CONSTRAINTS: Record<string, AtomicConstraint> = {
     ],
     architectureGuidance: [
       "Design mutation flows as: Server Action → mutate data → revalidateTag() → redirect() to fresh route for guaranteed cache coherence"
-    ]
+    ],
+    examples: {
+      invalid: [
+        "// ❌ Invalid: Relying on Route Handler mutation which does not invalidate the client Router Cache\n// app/posts/page.tsx (Client Component)\n'use client';\nexport default function Page() {\n  const handleMutate = async () => {\n    await fetch('/api/posts/create', { method: 'POST' });\n    // Bypasses Router Cache invalidation; navigating back will show stale data!\n  };\n  return <button onClick={handleMutate}>Create Post</button>;\n}"
+      ],
+      valid: [
+        "// ✅ Valid: Perform mutation via a Server Action which automatically triggers Router Cache invalidation\n// app/posts/actions.ts\n'use server';\nimport { revalidatePath } from 'next/cache';\nexport async function createPost() {\n  await db.createPost();\n  revalidatePath('/posts'); // Invalidates both Data Cache and Router Cache\n}"
+      ]
+    }
   },
   "RSC_API_VIOLATION-005": {
     id: "RSC_API_VIOLATION-005",
@@ -917,7 +939,15 @@ export const ATOMIC_CONSTRAINTS: Record<string, AtomicConstraint> = {
     ],
     architectureGuidance: [
       "Think of intercepting routes as modal-layer routing: the (.) folder is the modal content, the @modal slot is the modal container, and layout.tsx is the portal host"
-    ]
+    ],
+    examples: {
+      invalid: [
+        "// ❌ Invalid: Intercepting route folder setup without rendering it in parent layout\n// app/gallery/(.)photo/[id]/page.tsx\nexport default function PhotoModal() { return <Modal>...</Modal>; }\n\n// app/gallery/layout.tsx (Missing @modal parallel slot rendering)\nexport default function Layout({ children }) {\n  return <div>{children}</div>;\n}"
+      ],
+      valid: [
+        "// ✅ Valid: Render the intercepted route using a parallel route slot in the layout\n// app/gallery/layout.tsx\nexport default function Layout({ children, modal }) {\n  return (\n    <div>\n      {children}\n      {modal}\n    </div>\n  );\n}\n\n// app/gallery/@modal/default.tsx\nexport default function Default() { return null; }"
+      ]
+    }
   },
   "RO-005": {
     id: "RO-005",
@@ -942,7 +972,15 @@ export const ATOMIC_CONSTRAINTS: Record<string, AtomicConstraint> = {
     ],
     architectureGuidance: [
       "Streaming architecture: page.tsx is the static shell. Each independent data dependency is a separate async component wrapped in its own Suspense boundary. They load in parallel and stream independently."
-    ]
+    ],
+    examples: {
+      invalid: [
+        "// ❌ Invalid: Awaiting slow data directly in page renders without Suspense wrapping\nexport default async function Page() {\n  const data = await fetchSlowData();\n  return <DataView data={data} />;\n}"
+      ],
+      valid: [
+        "// ✅ Valid: Extract data-fetching into a child component and wrap in Suspense\nimport { Suspense } from 'react';\n\nasync function DataComponent() {\n  const data = await fetchSlowData();\n  return <DataView data={data} />;\n}\n\nexport default function Page() {\n  return (\n    <Suspense fallback={<Skeleton />}>\n      <DataComponent />\n    </Suspense>\n  );\n}"
+      ]
+    }
   },
   "MD-002": {
     id: "MD-002",
@@ -991,7 +1029,15 @@ export const ATOMIC_CONSTRAINTS: Record<string, AtomicConstraint> = {
     ],
     architectureGuidance: [
       "Layout components should render static shells instantly. Avoid calling await fetch() or awaiting database queries directly inside the layout body. Instead, pass layout-level data fetching into child components wrapped in Suspense."
-    ]
+    ],
+    examples: {
+      invalid: [
+        "// ❌ Invalid: Layout component blocks rendering of all nested pages on a slow fetch\nexport default async function Layout({ children }) {\n  const settings = await fetchSiteSettings();\n  return (\n    <div>\n      <Header settings={settings} />\n      {children}\n    </div>\n  );\n}"
+      ],
+      valid: [
+        "// ✅ Valid: Move the layout-level fetch into a Suspense-wrapped child component\nimport { Suspense } from 'react';\n\nasync function LayoutHeader() {\n  const settings = await fetchSiteSettings();\n  return <Header settings={settings} />;\n}\n\nexport default function Layout({ children }) {\n  return (\n    <div>\n      <Suspense fallback={<HeaderSkeleton />}>\n        <LayoutHeader />\n      </Suspense>\n      {children}\n    </div>\n  );\n}"
+      ]
+    }
   },
   "LAYOUT_AUTH_GATE": {
     id: "LAYOUT_AUTH_GATE",
@@ -1029,7 +1075,15 @@ export const ATOMIC_CONSTRAINTS: Record<string, AtomicConstraint> = {
     ],
     architectureGuidance: [
       "Keep async operations independent and bundle them using Promise.all() or Promise.allSettled()."
-    ]
+    ],
+    examples: {
+      invalid: [
+        "// ❌ Invalid: Sequential await calls causing a waterfall delay\nexport default async function Page() {\n  const user = await fetchUser(); // Takes 200ms\n  const posts = await fetchPosts(); // Takes 300ms (Total: 500ms)\n  return <Dashboard user={user} posts={posts} />;\n}"
+      ],
+      valid: [
+        "// ✅ Valid: Fetch data in parallel using Promise.all()\nexport default async function Page() {\n  const [user, posts] = await Promise.all([\n    fetchUser(),\n    fetchPosts()\n  ]); // Total: 300ms (run in parallel)\n  return <Dashboard user={user} posts={posts} />;\n}"
+      ]
+    }
   },
   "RV-003": {
     id: "RV-003",
@@ -1050,7 +1104,15 @@ export const ATOMIC_CONSTRAINTS: Record<string, AtomicConstraint> = {
     ],
     architectureGuidance: [
       "Always provide the second 'type' parameter to revalidatePath when targeting dynamic routes to ensure proper cache invalidation."
-    ]
+    ],
+    examples: {
+      invalid: [
+        "// ❌ Invalid: Missing the second 'type' argument for dynamic route revalidation\nimport { revalidatePath } from 'next/cache';\nexport async function updatePost() {\n  revalidatePath('/blog/[slug]');\n}"
+      ],
+      valid: [
+        "// ✅ Valid: Provide the 'page' or 'layout' type parameter for dynamic segments\nimport { revalidatePath } from 'next/cache';\nexport async function updatePost() {\n  revalidatePath('/blog/[slug]', 'page');\n}"
+      ]
+    }
   },
   "RE-005": {
     id: "RE-005",
@@ -1069,7 +1131,15 @@ export const ATOMIC_CONSTRAINTS: Record<string, AtomicConstraint> = {
     ],
     architectureGuidance: [
       "Leverage 'use cache' for expensive backend-dependent renders to maximize static serving benefits."
-    ]
+    ],
+    examples: {
+      invalid: [
+        "// ❌ Invalid: Missing caching for an expensive database query or layout component\nexport async function getExpensiveStats() {\n  return db.select().from(statsTable);\n}"
+      ],
+      valid: [
+        "// ✅ Valid: Cache the function output using Next.js 15 'use cache' directive\nexport async function getExpensiveStats() {\n  'use cache';\n  return db.select().from(statsTable);\n}"
+      ]
+    }
   },
   "PF-007": {
     id: "PF-007",
@@ -1088,7 +1158,15 @@ export const ATOMIC_CONSTRAINTS: Record<string, AtomicConstraint> = {
     ],
     architectureGuidance: [
       "Ensure all large, distributed UI packages are optimized in next.config to keep bundle sizes under budget."
-    ]
+    ],
+    examples: {
+      invalid: [
+        "// ❌ Invalid: next.config.js missing experimental.optimizePackageImports for heavy libraries\nmodule.exports = {\n  // missing config\n};"
+      ],
+      valid: [
+        "// ✅ Valid: Enable package optimization in next.config.js\nmodule.exports = {\n  experimental: {\n    optimizePackageImports: ['lucide-react', 'react-icons']\n  }\n};"
+      ]
+    }
   },
   "SC-SECURITY-002": {
     id: "SC-SECURITY-002",
@@ -1107,7 +1185,15 @@ export const ATOMIC_CONSTRAINTS: Record<string, AtomicConstraint> = {
     ],
     architectureGuidance: [
       "Enforce server-only boundary annotations across all data access layer (DAL) and utility modules."
-    ]
+    ],
+    examples: {
+      invalid: [
+        "// ❌ Invalid: Private database initialization module leaks credentials if imported in Client Components\n// app/lib/db.ts\nimport { PrismaClient } from '@prisma/client';\nexport const prisma = new PrismaClient();"
+      ],
+      valid: [
+        "// ✅ Valid: Secure the backend-only boundary by importing 'server-only'\n// app/lib/db.ts\nimport 'server-only';\nimport { PrismaClient } from '@prisma/client';\nexport const prisma = new PrismaClient();"
+      ]
+    }
   },
   "CC-HYDRATION-ABUSE-001": {
     id: "CC-HYDRATION-ABUSE-001",
@@ -1132,7 +1218,15 @@ export const ATOMIC_CONSTRAINTS: Record<string, AtomicConstraint> = {
     ],
     architectureGuidance: [
       "Architectural rule: Server Components own and process raw data. Client Components receive filtered props. Raw datasets should never cross the server-client boundary directly via imports."
-    ]
+    ],
+    examples: {
+      invalid: [
+        "// ❌ Invalid: Importing a large static data file inside a Client Component\n'use client';\nimport countries from './large-countries.json'; // 150KB file\nexport default function Selector() {\n  return <select>{countries.map(c => <option key={c.code}>{c.name}</option>)}</select>;\n}"
+      ],
+      valid: [
+        "// ✅ Valid: Load the large static data file in a Server Component and pass down\n// page.tsx (Server Component)\nimport countries from './large-countries.json';\nimport Selector from './selector';\nexport default function Page() {\n  // Pass clean, minimal options DTO to the client\n  const options = countries.map(c => ({ code: c.code, name: c.name }));\n  return <Selector options={options} />;\n}\n\n// selector.tsx (Client Component)\n'use client';\nexport default function Selector({ options }) {\n  return <select>{options.map(o => <option key={o.code}>{o.name}</option>)}</select>;\n}"
+      ]
+    }
   },
   "DF-009": {
     id: "DF-009",
@@ -1182,6 +1276,52 @@ export const ATOMIC_CONSTRAINTS: Record<string, AtomicConstraint> = {
 };
 
 
+let registryInstance: KnowledgeRegistry | null = null;
+function getRegistry(): KnowledgeRegistry {
+  if (!registryInstance) {
+    registryInstance = new KnowledgeRegistry();
+  }
+  return registryInstance;
+}
+
+const REGISTRY_MAP: Record<string, string> = {
+  "SC-BROWSER-API-001": "SC-001",
+  "SC-HOOK-USAGE-001": "SC-002",
+  "SC-EVENT-HANDLER-001": "SC-003",
+  "SC-CONTEXT-001": "SC-005",
+  "SC-MUTATION-001": "SC-006",
+  "SC-SERIALIZATION-001": "CC-002",
+  "SC-THIRD-PARTY-001": "CC-004",
+  "CC-ASYNC-CLIENT-001": "SC-002",
+  "CC-RUNTIME-LEAK-001": "BD-002",
+  "CC-SERVER-IMPORT-001": "CC-003",
+  "CC-ROUTE-HANDLER-001": "CC-005",
+  "HY-RENDER-BROWSER-API-001": "HY-001",
+  "SA-AUTH-001": "SA-001",
+  "SA-SERIALIZATION-001": "SA-002",
+  "SA-READ-ACTION-001": "SA-003",
+  "SA-VALIDATION-001": "SA-004",
+  "SA-ROUTE-HANDLER-001": "SA-005",
+  "SA-BROWSER-API-001": "SC-001",
+  "HY-NON-DETERMINISTIC-001": "HY-001",
+  "HY-RENDER-MUTATION-001": "SC-006",
+  "DF-006": "DF-002",
+  "DF-007": "DF-008",
+  "CA-006": "RV-001",
+  "CA-007": "RV-001",
+  "RO-004": "RO-003",
+  "RO-005": "ST-001",
+  "RO-006": "ST-002",
+  "LAYOUT_AUTH_GATE": "ST-002",
+  "RO-007": "RE-004",
+  "RV-003": "RV-001",
+  "RE-005": "DF-004",
+  "PF-007": "PF-001",
+  "CC-HYDRATION-ABUSE-001": "CC-001",
+  "DF-009": "MD-002",
+  "DF-010": "RE-004",
+};
+
 export function mapEventToDiagnostic(
   event: SemanticEvent,
   constraintId: string,
@@ -1214,6 +1354,27 @@ export function mapEventToDiagnostic(
   ]);
   const baseSeverity = ERROR_CONSTRAINTS.has(constraint.id) ? "error" : "warning";
 
+  let examples = constraint.examples;
+  if (!examples) {
+    try {
+      const registry = getRegistry();
+      let regConstraint = registry.getConstraintById(constraintId);
+      if (regConstraint && regConstraint.examples) {
+        examples = regConstraint.examples;
+      } else {
+        const mappedId = REGISTRY_MAP[constraintId];
+        if (mappedId) {
+          regConstraint = registry.getConstraintById(mappedId);
+          if (regConstraint && regConstraint.examples) {
+            examples = regConstraint.examples;
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`[mapEventToDiagnostic] Failed to resolve examples for ${constraintId}:`, err);
+    }
+  }
+
   return {
     file,
     line,
@@ -1229,6 +1390,7 @@ export function mapEventToDiagnostic(
     optimizationGuidance: [],
     productionRisks: constraint.productionRisks,
     fix: constraint.quickFix[0],
-    isGuarded
+    isGuarded,
+    examples
   };
 }

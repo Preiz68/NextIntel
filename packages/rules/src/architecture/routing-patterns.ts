@@ -1211,7 +1211,17 @@ export const routingPatterns: Rule = {
                     optimizationGuidance: [],
                     productionRisks: [
                       "Stale dynamic routes served indefinitely to users after mutations."
-                    ]
+                    ],
+                    examples: {
+                      invalid: [
+                        "// ❌ Invalid: Missing type argument on path template\nrevalidatePath('/blog/[slug]');",
+                        "// ❌ Invalid: Missing type argument on dynamic concat\nrevalidatePath('/blog/' + slug);"
+                      ],
+                      valid: [
+                        "// ✅ Valid: Explicitly invalidates dynamic page\nrevalidatePath('/blog/[slug]', 'page');",
+                        "// ✅ Valid: Explicitly invalidates dynamic layout\nrevalidatePath('/blog/[slug]', 'layout');"
+                      ]
+                    }
                   });
                 }
               }

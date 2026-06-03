@@ -106,7 +106,15 @@ export const optimizePackageImports: Rule = {
             architectureSuggestions: constraint?.architectureSuggestions ?? [],
             optimizationGuidance: constraint?.optimizationGuidance ?? [],
             productionRisks: constraint?.productionRisks ?? [],
-            examples: constraint?.examples,
+            examples: {
+            invalid: [
+              "// ❌ Invalid: next.config.js missing optimizePackageImports for heavy libraries\n// next.config.js\nmodule.exports = {\n  reactStrictMode: true,\n};"
+            ],
+            valid: [
+              "// ✅ Valid (Option 1): Configure optimizePackageImports in next.config.js\n// next.config.js\nmodule.exports = {\n  experimental: {\n    optimizePackageImports: [\"lucide-react\", \"react-icons\"]\n  }\n};",
+              "// ✅ Valid (Option 2): Use explicit deep module imports instead of tree-shaking\n\"use client\";\nimport Camera from 'lucide-react/dist/esm/icons/camera';"
+            ]
+          },
           });
         }
       }
