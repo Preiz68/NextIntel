@@ -3,4 +3,6 @@ packages:
   - "packages/*"
   - "vscode-extension"
 allowBuilds:
+  '@vscode/vsce-sign': true
   esbuild: false
+  keytar: true
