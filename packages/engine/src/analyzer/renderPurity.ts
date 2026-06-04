@@ -95,7 +95,55 @@ function isDeferredNode(node: Node, componentNode: Node): boolean {
   return false;
 }
 
+function isValueDirectlyRenderedInJsx(node: Node): boolean {
+  let current = node;
+  let parent = current.getParent();
+  while (parent) {
+    if (parent.isKind(SyntaxKind.JsxExpression)) {
+      return true;
+    }
+    if (parent.isKind(SyntaxKind.ParenthesizedExpression)) {
+      current = parent;
+      parent = current.getParent();
+      continue;
+    }
+    if (parent.isKind(SyntaxKind.PropertyAccessExpression)) {
+      const propAccess = parent.asKindOrThrow(SyntaxKind.PropertyAccessExpression);
+      if (propAccess.getExpression() === current) {
+        current = parent;
+        parent = current.getParent();
+        continue;
+      }
+    }
+    if (parent.isKind(SyntaxKind.CallExpression)) {
+      const call = parent.asKindOrThrow(SyntaxKind.CallExpression);
+      if (call.getExpression() === current) {
+        current = parent;
+        parent = current.getParent();
+        continue;
+      }
+    }
+    // Any other intermediate nodes mean it is not a direct render path
+    break;
+  }
+  return false;
+}
+
 export function checkRenderPurity(sourceFile: SourceFile): PurityFinding[] {
+  const filePath = sourceFile.getFilePath();
+  // Check if API route
+  const isApiRoute = filePath.includes("/app/api/") || filePath.includes("\\app\\api\\") || filePath.endsWith("route.ts") || filePath.endsWith("route.js");
+  
+  // Check if top-level "use server" is present
+  const hasTopLevelUseServer = sourceFile.getStatements().some(s => {
+    const text = s.getText().trim().replace(/;$/, "");
+    return text === '"use server"' || text === "'use server'";
+  });
+
+  if (isApiRoute || hasTopLevelUseServer) {
+    return [];
+  }
+
   const findings: PurityFinding[] = [];
 
   const checkComponent = (componentNode: FunctionDeclaration | ArrowFunction | FunctionExpression) => {
@@ -110,7 +158,9 @@ export function checkRenderPurity(sourceFile: SourceFile): PurityFinding[] {
         if (calleeText === "Math.random" || calleeText.endsWith(".Math.random")) {
           message = "Math.random() is non-deterministic and can trigger hydration mismatches.";
         } else if (calleeText === "Date.now" || calleeText.endsWith(".Date.now")) {
-          message = "Date.now() is non-deterministic and can trigger hydration mismatches.";
+          if (isValueDirectlyRenderedInJsx(node)) {
+            message = "Date.now() is non-deterministic and can trigger hydration mismatches.";
+          }
         } else if (calleeText === "performance.now" || calleeText.endsWith(".performance.now")) {
           message = "performance.now() is non-deterministic and can trigger hydration mismatches.";
         } else if (calleeText === "crypto.randomUUID" || calleeText.endsWith(".crypto.randomUUID")) {
@@ -131,16 +181,19 @@ export function checkRenderPurity(sourceFile: SourceFile): PurityFinding[] {
         const newExpr = node.asKindOrThrow(SyntaxKind.NewExpression);
         const className = newExpr.getExpression().getText();
         if (className === "Date" && newExpr.getArguments().length === 0) {
-          if (!isDeferredNode(node, componentNode)) {
-            findings.push({
-              type: "nondeterminism",
-              line: node.getStartLineNumber(),
-              expression: node.getText(),
-              message: "new Date() is non-deterministic and can trigger hydration mismatches.",
-            });
+          if (isValueDirectlyRenderedInJsx(node)) {
+            if (!isDeferredNode(node, componentNode)) {
+              findings.push({
+                type: "nondeterminism",
+                line: node.getStartLineNumber(),
+                expression: node.getText(),
+                message: "new Date() is non-deterministic and can trigger hydration mismatches.",
+              });
+            }
           }
         }
       }
+
 
       // 2. Side Effect / Mutation Detection
       if (node.isKind(SyntaxKind.BinaryExpression)) {

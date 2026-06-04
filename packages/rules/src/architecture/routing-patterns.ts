@@ -1,10 +1,9 @@
 import { Rule, RuleContext, Diagnostic } from "../types.js";
 import path from "node:path";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { mapEventToDiagnostic } from "../knowledge/atomicConstraints.js";
 import { Project, SyntaxKind, Node } from "ts-morph";
-import { readFileSync } from "node:fs";
-
+import { isWaterfallCandidate } from "../utils/waterfall.js";
 /**
  * Checks if the direct wrapping function ancestor of awaitExpr is the specified func node.
  */
@@ -28,6 +27,13 @@ function expressionReferencesVariables(awaitExpr: Node, variables: Set<string>):
   const identifiers = expression.getDescendantsOfKind(SyntaxKind.Identifier);
   for (const id of identifiers) {
     if (variables.has(id.getText())) {
+      const parent = id.getParent();
+      if (parent && parent.getKind() === SyntaxKind.PropertyAccessExpression) {
+        const propAccess = parent.asKind(SyntaxKind.PropertyAccessExpression);
+        if (propAccess && propAccess.getNameNode() === id) {
+          continue;
+        }
+      }
       return true;
     }
   }
@@ -692,14 +698,7 @@ export const routingPatterns: Rule = {
                   }
 
                   // RO-007 sequential waterfall logic
-                  const awaitsForWaterfall = directAwaits.filter(aw => {
-                    const expression = aw.getExpression();
-                    if (!expression) return false;
-                    const expressionText = expression.getText();
-                    return !expressionText.startsWith("Promise.all") && 
-                           !expressionText.startsWith("Promise.allSettled") && 
-                           !expressionText.startsWith("Promise.race");
-                  });
+                  const awaitsForWaterfall = directAwaits.filter(aw => isWaterfallCandidate(aw));
 
                   if (awaitsForWaterfall.length >= 2) {
                     const definedVariables = new Set<string>();
@@ -952,15 +951,7 @@ export const routingPatterns: Rule = {
                 if (body) {
                   const allAwaits = body.getDescendantsOfKind(SyntaxKind.AwaitExpression);
                   const directAwaits = allAwaits.filter(aw => isDirectAwaitInFunction(aw, funcNode!));
-                  
-                  const awaitsForWaterfall = directAwaits.filter(aw => {
-                    const expression = aw.getExpression();
-                    if (!expression) return false;
-                    const expressionText = expression.getText();
-                    return !expressionText.startsWith("Promise.all") && 
-                           !expressionText.startsWith("Promise.allSettled") && 
-                           !expressionText.startsWith("Promise.race");
-                  });
+                  const awaitsForWaterfall = directAwaits.filter(aw => isWaterfallCandidate(aw));
 
                   if (awaitsForWaterfall.length >= 2) {
                     const definedVariables = new Set<string>();

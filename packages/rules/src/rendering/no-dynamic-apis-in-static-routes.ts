@@ -1,5 +1,6 @@
 import { Rule, RuleContext, Diagnostic } from "../types.js";
 import { readFileSync } from "node:fs";
+import { Project, SyntaxKind } from "ts-morph";
 import path from "node:path";
 
 /**
@@ -53,137 +54,119 @@ export const noDynamicApisInStaticRoutes: Rule = {
       return false;
     };
 
+    // Dynamic API names recognized as render-phase triggers
+    const DYNAMIC_API_NAMES = ["cookies", "headers", "draftMode", "unstable_noStore", "connection"];
+
+    /**
+     * Verify via ts-morph AST that a file actually contains a direct CallExpression
+     * to one of the dynamic APIs. Returns {found: true, symbol, line} or {found: false}.
+     */
+    const verifyDynamicCallAST = (filePath: string): { found: boolean; symbol: string; line: number } => {
+      let fileContent = "";
+      try { fileContent = readFileSync(filePath, "utf-8"); } catch { return { found: false, symbol: "", line: 1 }; }
+      const project = new Project({ useInMemoryFileSystem: true });
+      const sf = project.createSourceFile("check.ts", fileContent);
+      const calls = sf.getDescendantsOfKind(SyntaxKind.CallExpression).filter(call => {
+        const name = call.getExpression().getText();
+        return DYNAMIC_API_NAMES.includes(name);
+      });
+      if (calls.length === 0) return { found: false, symbol: "", line: 1 };
+      const first = calls[0]!;
+      return { found: true, symbol: first.getExpression().getText(), line: first.getStartLineNumber() };
+    };
+
     for (const analysis of context.analyses) {
-      // Apply hard partition guard: Server Component/Utility only
+      // Hard partition guard: only process server-side files
       const isServer = !analysis.isClientComponent && analysis.executionModel.componentType !== "client";
       if (!isServer) continue;
 
       const filePath = analysis.filePath;
-      const hasDirectTriggers = analysis.rendering.triggers.some(t =>
-        t === "cookies" || t === "headers" || t === "draftMode" || t === "connection" || t === "unstable_noStore"
-      );
 
-      const base = path.basename(filePath).toLowerCase();
-      const isLayout = base.startsWith("layout.");
+      // ── Only flag page/layout files ────────────────────────────────────────
+      // Utility files using headers()/cookies() are perfectly valid server-side code.
+      // We only emit diagnostics when a page/layout is explicitly configured as
+      // force-static and either directly calls, or transitively imports a caller of,
+      // a dynamic API.
+      if (!isPageOrLayout(filePath)) continue;
 
-      if (isPageOrLayout(filePath)) {
-        let content = "";
-        try {
-          content = readFileSync(filePath, "utf-8");
-        } catch {
-          // ignore
-        }
-        const isForceStatic = content.includes("force-static");
+      let content = "";
+      try { content = readFileSync(filePath, "utf-8"); } catch { continue; }
 
-        if (isLayout && !isForceStatic) {
-          continue;
-        }
+      // Guard: only flag if segment is explicitly opting into force-static
+      const isForceStatic = content.includes("force-static");
+      if (!isForceStatic) continue;
 
-        if (hasDirectTriggers) {
-          // Case 1: Dynamic APIs in layout/page directly
-          let line = 1;
-          const lines = content.split("\n");
-          for (let i = 0; i < lines.length; i++) {
-            if (lines[i]!.includes("cookies(") || lines[i]!.includes("headers(")) {
-              line = i + 1;
-              break;
-            }
-          }
+      // ── Case 1: Page/layout directly calls a dynamic API ─────────────────
+      const directAST = verifyDynamicCallAST(filePath);
+      if (directAST.found) {
+        diagnostics.push({
+          file: filePath,
+          line: directAST.line,
+          severity: "error",
+          ruleId: this.id,
+          id: constraint?.id ?? "DYNAMIC_RENDER_TRIGGER-003",
+          message: `Dynamic rendering conflict: '${directAST.symbol}()' is called directly inside a page/layout configured as 'force-static'. This invalidates the static render constraint and will throw at runtime.`,
+          fix: quickFixes[0],
+          whyItMatters,
+          quickFixes,
+          architectureSuggestions,
+          optimizationGuidance,
+          productionRisks,
+          examples: constraint?.examples,
+        });
+        continue;
+      }
 
-          diagnostics.push({
-            file: filePath,
-            line,
-            severity: isForceStatic ? "error" : "warning",
-            ruleId: this.id,
-            id: constraint?.id ?? "DYNAMIC_RENDER_TRIGGER-003",
-            message: `Dynamic rendering transition: cookies()/headers() called directly inside page/layout. This triggers a transition to request-time dynamic rendering.`,
-            fix: quickFixes[0],
-            whyItMatters,
-            quickFixes,
-            architectureSuggestions,
-            optimizationGuidance,
-            productionRisks,
-            examples: constraint?.examples,
-          });
-        } else {
-          // Case 2: check if page/layout imports any utilities with dynamic triggers
-          let dynamicUtil: string | null = null;
-          let triggerSymbol: string | null = null;
+      // ── Case 2: Page/layout imports a utility that calls a dynamic API ────
+      // We require AST-level verification on the utility file — not just metadata.
+      let dynamicUtil: string | null = null;
+      let utilSymbol = "";
+      let utilLine = 1;
 
-          for (const other of context.analyses) {
-            if (other.filePath !== filePath && other.rendering.triggers.length > 0) {
-              if (canReach(filePath, other.filePath)) {
-                dynamicUtil = other.filePath;
-                triggerSymbol = other.rendering.triggers[0]!;
-                break;
-              }
-            }
-          }
+      for (const other of context.analyses) {
+        if (other.filePath === filePath) continue;
+        // Quick pre-filter: metadata must indicate some dynamic trigger before we run AST
+        const metadataSuggestsTrigger = other.rendering?.triggers?.some((t: string) => DYNAMIC_API_NAMES.includes(t));
+        if (!metadataSuggestsTrigger) continue;
+        // Confirm the page/layout actually reaches this file through the import graph
+        if (!canReach(filePath, other.filePath)) continue;
+        // AST-level verification: confirm the utility actually has the call expression
+        const astResult = verifyDynamicCallAST(other.filePath);
+        if (!astResult.found) continue;
+        dynamicUtil = other.filePath;
+        utilSymbol = astResult.symbol;
+        utilLine = astResult.line;
+        break;
+      }
 
-          if (dynamicUtil) {
-            let line = 1;
-            const utilBase = path.basename(dynamicUtil, path.extname(dynamicUtil));
-            const lines = content.split("\n");
-            for (let i = 0; i < lines.length; i++) {
-              if (lines[i]!.includes(utilBase) && (lines[i]!.includes("import") || lines[i]!.includes("require"))) {
-                line = i + 1;
-                break;
-              }
-            }
-
-            diagnostics.push({
-              file: filePath,
-              line,
-              severity: isForceStatic ? "error" : "warning",
-              ruleId: this.id,
-              id: constraint?.id ?? "DYNAMIC_RENDER_TRIGGER-003",
-              message: `Dynamic rendering transition: Page/layout imports component/utility '${path.basename(dynamicUtil)}' which uses dynamic API '${triggerSymbol}()'. This shifts the route rendering from static to dynamic.`,
-              fix: `Isolate dynamic API usage or configure the segment dynamic rendering options.`,
-              whyItMatters,
-              quickFixes,
-              architectureSuggestions,
-              optimizationGuidance,
-              productionRisks,
-              examples: constraint?.examples,
-            });
+      if (dynamicUtil) {
+        // Find the import line in the page/layout for precise location
+        let importLine = 1;
+        const utilBase = path.basename(dynamicUtil, path.extname(dynamicUtil));
+        const pageLines = content.split("\n");
+        for (let i = 0; i < pageLines.length; i++) {
+          const l = pageLines[i]!;
+          if (l.includes(utilBase) && (l.includes("import") || l.includes("require"))) {
+            importLine = i + 1;
+            break;
           }
         }
-      } else {
-        // This is a utility file (not page/layout)
-        if (hasDirectTriggers) {
-          // Check if it is imported by any page or layout (i.e. if it can be reached from any page/layout)
-          const isImported = context.analyses.some(a => isPageOrLayout(a.filePath) && canReach(a.filePath, filePath));
 
-          if (!isImported) {
-            let line = 1;
-            try {
-              const fileContent = readFileSync(filePath, "utf-8");
-              const lines = fileContent.split("\n");
-              for (let i = 0; i < lines.length; i++) {
-                if (lines[i]!.includes("cookies(") || lines[i]!.includes("headers(")) {
-                  line = i + 1;
-                  break;
-                }
-              }
-            } catch {}
-
-            // Case 3: isolated utility with headers() -> info severity / safe warning
-            diagnostics.push({
-              file: filePath,
-              line,
-              severity: "info",
-              ruleId: this.id,
-              id: constraint?.id ?? "DYNAMIC_RENDER_TRIGGER-003",
-              message: `Dynamic API is accessed inside isolated utility '${path.basename(filePath)}'. This is safe since it is never imported by any active page or layout route segment.`,
-              fix: "No fix required while utility remains isolated.",
-              whyItMatters: "Dynamic APIs in unimported files do not trigger dynamic route compilation.",
-              quickFixes: [],
-              architectureSuggestions: ["Ensure this utility is only imported by dynamic contexts if used in the future."],
-              optimizationGuidance: [],
-              productionRisks: [],
-            });
-          }
-        }
+        diagnostics.push({
+          file: filePath,
+          line: importLine,
+          severity: "error",
+          ruleId: this.id,
+          id: constraint?.id ?? "DYNAMIC_RENDER_TRIGGER-003",
+          message: `Dynamic rendering conflict: Page/layout configured as 'force-static' imports '${path.basename(dynamicUtil)}' (line ${utilLine}) which calls '${utilSymbol}()'. Remove the dynamic call or change the segment export config.`,
+          fix: `Isolate the dynamic API call into a separate dynamically-rendered child component, or remove the force-static export.`,
+          whyItMatters,
+          quickFixes,
+          architectureSuggestions,
+          optimizationGuidance,
+          productionRisks,
+          examples: constraint?.examples,
+        });
       }
     }
 

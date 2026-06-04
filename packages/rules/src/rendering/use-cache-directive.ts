@@ -38,6 +38,12 @@ export const useCacheDirective: Rule = {
       const hasUnstableCache = contentWithoutComments.includes("unstable_cache");
       if (hasUseCache || hasUnstableCache) continue; // Already cached!
 
+      const usesDynamicTriggers = 
+        (analysis.rendering?.triggers && analysis.rendering.triggers.some(t => ["cookies", "headers", "draftMode", "connection"].includes(t))) ||
+        (analysis.executionModel?.usesServerApis && analysis.executionModel.usesServerApis.some(api => api.includes("cookies") || api.includes("headers") || api.includes("draftMode")));
+
+      if (usesDynamicTriggers) continue;
+
       const performsDataFetch = 
         analysis.fetchCalls.length > 0 || 
         analysis.executionModel?.fetchStrategy?.hasFetch ||

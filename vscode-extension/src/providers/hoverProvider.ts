@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { Diagnostic as RuleDiagnostic } from "rules";
+import { parseExample } from "./exampleParser";
 
 // ─── Severity display maps ───────────────────────────────────────────────────
 
@@ -143,14 +144,29 @@ export class NextIntelHoverProvider implements vscode.HoverProvider {
     }
 
     // ── Code examples ─────────────────────────────────────────────────────────
+    const appendStructuredExample = (rawCode: string, label: string, icon: string) => {
+      const parsed = parseExample(rawCode);
+      md.appendMarkdown(`#### ${icon} ${label}\n\n`);
+      if (parsed.description) {
+        md.appendMarkdown(`*${parsed.description}*\n\n`);
+      }
+      for (const file of parsed.files) {
+        if (file.filename) {
+          md.appendMarkdown(`📄 **${file.filename}**\n`);
+        }
+        md.appendCodeblock(file.code, "typescript");
+      }
+    };
+
     if (d.examples?.invalid?.length) {
       md.appendMarkdown(`---\n\n`);
-      md.appendMarkdown(`#### $(error) Avoid\n\n`);
-      md.appendCodeblock(d.examples.invalid[0]!, "typescript");
+      appendStructuredExample(d.examples.invalid[0]!, "Avoid", "$(error)");
     }
     if (d.examples?.valid?.length) {
-      md.appendMarkdown(`#### $(pass-filled) Prefer\n\n`);
-      md.appendCodeblock(d.examples.valid[0]!, "typescript");
+      if (!d.examples?.invalid?.length) {
+        md.appendMarkdown(`---\n\n`);
+      }
+      appendStructuredExample(d.examples.valid[0]!, "Prefer", "$(pass-filled)");
     }
 
     return md;

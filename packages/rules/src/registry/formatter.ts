@@ -286,13 +286,18 @@ export function renderGroupedDiagnostics(diagnostics: Diagnostic[]): string {
       const codeframe = generateCodeFrame(filePath, targetLine, affects);
 
       const affectsStr = affects.length > 0 ? affects.join(", ") : "the affected symbol";
-      const causeText = (ruleId === "CC-RUNTIME-LEAK-001" && diags[0]?.message)
-        ? diags[0].message
-        : (spec
-            ? (affects.length > 0
-                ? `'${affectsStr}' — ${spec.message.cause.charAt(0).toLowerCase()}${spec.message.cause.slice(1)}`
-                : spec.message.cause)
-            : "Evaluation failed.");
+      const specCause = spec
+        ? (affects.length > 0
+            ? `'${affectsStr}' \u2014 ${spec.message.cause.charAt(0).toLowerCase()}${spec.message.cause.slice(1)}`
+            : spec.message.cause)
+        : "Evaluation failed.";
+      // Prefer the rule-emitted diagnostic message when it carries context-rich detail.
+      // Rules build specific messages at detection time (naming the exact API, file, or conflict).
+      // Replace with spec cause only when no specific message is available.
+      const firstDiagMessage = diags[0]?.message ?? "";
+      const causeText = firstDiagMessage && firstDiagMessage !== specCause
+        ? firstDiagMessage
+        : specCause;
 
       const boundaryLabel = spec?.boundary ?? "UNKNOWN_BOUNDARY";
 

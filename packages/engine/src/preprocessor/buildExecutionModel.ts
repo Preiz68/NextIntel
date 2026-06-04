@@ -509,12 +509,6 @@ export function buildExecutionModel(
       const isDeferred = insideSafeScope || insideHandler;
 
       if (!isDeferred) {
-        if (lineText.includes("Math.random(")) {
-          nonDeterministicInRender.push("Math.random()");
-        }
-        if (lineText.includes("Date.now(") || lineText.includes("new Date(")) {
-          nonDeterministicInRender.push("Date.now() / new Date()");
-        }
         if (/\b(window|document|localStorage|sessionStorage|navigator)\b/.test(lineText)) {
           if (!lineText.includes("typeof window") && !lineText.includes("typeof document")) {
             const apiMatch = lineText.match(/\b(window|document|localStorage|sessionStorage|navigator)\b/)?.[0] || "window";
@@ -523,6 +517,15 @@ export function buildExecutionModel(
         }
       }
     });
+
+    // Populate non-deterministic expressions from AST findings
+    if (analysis.simulationFindings) {
+      analysis.simulationFindings.forEach((finding) => {
+        if (finding.type === "hydration_nondeterminism") {
+          nonDeterministicInRender.push(finding.symbol);
+        }
+      });
+    }
 
     if (browserGlobalsInRender.length > 0) {
       hydrationRiskLevel = "critical";
