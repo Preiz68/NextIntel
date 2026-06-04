@@ -47,9 +47,22 @@ export const useCacheDirective: Rule = {
       const performsDataFetch = 
         analysis.fetchCalls.length > 0 || 
         analysis.executionModel?.fetchStrategy?.hasFetch ||
-        /\b(db\.\w+|prisma\.\w+|drizzle\.\w+)\b/.test(content);
+        /\b(db\.\w+|prisma\.\w+|drizzle\.\w+)\b/.test(contentWithoutComments);
 
       if (performsDataFetch) {
+        // Skip components or files that perform mutations
+        // Use the already-comment-stripped content to avoid matching keywords in comments
+        const lowercaseContent = contentWithoutComments.toLowerCase();
+        const mutationKeywords = [
+          "insert", "update", "delete", "create", "upsert",
+          "remove", "save", "patch", "updateone", "updatemany",
+          "deleteone", "deletemany", "findbyidandupdate", "findbyidanddelete",
+          "insertone", "insertmany", "replaceone"
+        ];
+        const isMutation = mutationKeywords.some(kw => 
+          lowercaseContent.includes("." + kw) || lowercaseContent.includes(kw + "(")
+        );
+        if (isMutation) continue;
         diagnostics.push({
           file: analysis.filePath,
           line: 1,

@@ -1,5 +1,6 @@
 import { Rule, RuleContext, Diagnostic } from "../types.js";
 import { readFileSync } from "node:fs";
+import { Project, SyntaxKind } from "ts-morph";
 
 /**
  * Rule: no-use-cache-in-client-components
@@ -9,6 +10,51 @@ import { readFileSync } from "node:fs";
  *
  * Semantics: Sourced from "Caching" knowledge pack constraint CA-005.
  */
+
+function hasUseCacheDirective(content: string): { hasDirective: boolean; line: number } {
+  if (!content.includes("use cache")) {
+    return { hasDirective: false, line: 0 };
+  }
+
+  const project = new Project();
+  const sourceFile = project.createSourceFile("temp.ts", content);
+
+  let line = 0;
+
+  const isUseCache = (stmt: any): boolean => {
+    if (stmt.getKind() === SyntaxKind.ExpressionStatement) {
+      const expr = stmt.getExpression();
+      if (
+        expr.getKind() === SyntaxKind.StringLiteral &&
+        expr.getLiteralText() === "use cache"
+      ) {
+        line = stmt.getStartLineNumber();
+        return true;
+      }
+    }
+    return false;
+  };
+
+  // Check top-level statements
+  const statements = sourceFile.getStatements();
+  for (const stmt of statements) {
+    if (isUseCache(stmt)) {
+      return { hasDirective: true, line };
+    }
+  }
+
+  // Check blocks
+  const blocks = sourceFile.getDescendantsOfKind(SyntaxKind.Block);
+  for (const block of blocks) {
+    const firstStmt = block.getStatements()[0];
+    if (firstStmt && isUseCache(firstStmt)) {
+      return { hasDirective: true, line };
+    }
+  }
+
+  return { hasDirective: false, line: 0 };
+}
+
 export const noUseCacheInClientComponents: Rule = {
   id: "no-use-cache-in-client-components",
 
@@ -42,17 +88,9 @@ export const noUseCacheInClientComponents: Rule = {
         continue;
       }
 
-      if (!content.includes("use cache")) continue;
-
-      // Locate the exact line of the violation
-      let line = 1;
-      const lines = content.split("\n");
-      for (let i = 0; i < lines.length; i++) {
-        if (lines[i]!.includes("use cache")) {
-          line = i + 1;
-          break;
-        }
-      }
+      const check = hasUseCacheDirective(content);
+      if (!check.hasDirective) continue;
+      const line = check.line;
 
       diagnostics.push({
         file: analysis.filePath,

@@ -1,7 +1,52 @@
 import { Rule, RuleContext, Diagnostic } from "../types.js";
 import { readFileSync } from "node:fs";
-import { Project, SyntaxKind } from "ts-morph";
+import { Project, SyntaxKind, Node } from "ts-morph";
 import { mapEventToDiagnostic } from "../knowledge/atomicConstraints.js";
+
+function isDeferredOrCallback(callNode: Node): boolean {
+  let current: Node | undefined = callNode.getParent();
+  while (current) {
+    const kind = current.getKind();
+    if (
+      kind === SyntaxKind.ArrowFunction ||
+      kind === SyntaxKind.FunctionExpression ||
+      kind === SyntaxKind.FunctionDeclaration
+    ) {
+      // Check if this function is passed directly as an argument to a React hook
+      const parent = current.getParent();
+      if (parent && parent.getKind() === SyntaxKind.CallExpression) {
+        const callerText = (parent as any).getExpression().getText();
+        if (
+          callerText === "useEffect" ||
+          callerText === "useLayoutEffect" ||
+          callerText === "useCallback" ||
+          callerText === "useMemo"
+        ) {
+          return true;
+        }
+      }
+
+      // Check if this function is assigned to a JSX event handler prop
+      // e.g. onClick={async () => { fetch(...) }}
+      if (parent && parent.getKind() === SyntaxKind.JsxExpression) {
+        const jsxAttr = parent.getParent();
+        if (jsxAttr && jsxAttr.getKind() === SyntaxKind.JsxAttribute) {
+          const attrName = (jsxAttr as any).getNameNode()?.getText() ?? "";
+          if (/^on[A-Z]/.test(attrName)) return true;
+        }
+      }
+
+      // Check if this function is assigned to a variable whose name starts with
+      // "handle" — a common Next.js event-handler naming convention
+      if (parent && parent.getKind() === SyntaxKind.VariableDeclaration) {
+        const varName = (parent as any).getName() ?? "";
+        if (/^handle[A-Z]/.test(varName)) return true;
+      }
+    }
+    current = current.getParent();
+  }
+  return false;
+}
 
 export const noRouteHandlersInClientComponents: Rule = {
   id: "no-route-handlers-in-client-components",
@@ -31,15 +76,19 @@ export const noRouteHandlersInClientComponents: Rule = {
       }
 
       const project = new Project();
-      const sourceFile = project.createSourceFile("temp.ts", content);
+      const sourceFile = project.createSourceFile("temp.tsx", content);
 
       const callExpressions = sourceFile.getDescendantsOfKind(
         SyntaxKind.CallExpression
       );
-      let reported = false;
 
       for (const call of callExpressions) {
         if (call.getExpression().getText() === "fetch") {
+          // If the fetch call is inside useEffect or an event callback, it is safe
+          if (isDeferredOrCallback(call)) {
+            continue;
+          }
+
           const args = call.getArguments();
           if (args.length > 0) {
             const firstArg = args[0]!;
@@ -65,28 +114,9 @@ export const noRouteHandlersInClientComponents: Rule = {
                   )}'.`
                 )
               );
-              reported = true;
             }
           }
         }
-      }
-
-      if (
-        !reported &&
-        (content.includes("fetch('/api/") ||
-          content.includes("fetch(\"/api/") ||
-          content.includes("fetch(`/api/"))
-      ) {
-        diagnostics.push(
-          mapEventToDiagnostic(
-            "BOUNDARY_VIOLATION_DETECTED",
-            "CC-ROUTE-HANDLER-001",
-            this.id,
-            analysis.filePath,
-            1,
-            `Avoid calling Route Handlers from Client Components when Server Components can fetch instead.`
-          )
-        );
       }
     }
 

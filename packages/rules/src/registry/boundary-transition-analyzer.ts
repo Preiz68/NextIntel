@@ -65,6 +65,7 @@ export function analyzeTransitions(
       own === "shared-isomorphic"
     ) {
       for (const b of a.browserAPIs || []) {
+        if (b.isGuarded) continue;
         violations.push({
           file: a.filePath,
           line: b.line,

@@ -88,6 +88,10 @@ export const serverOnlyBoundary: Rule = {
 
       if (!content) continue;
 
+      // Strip single-line and multi-line comments so keyword checks don't
+      // fire on commented-out env var names or documentation strings.
+      const contentWithoutComments = content.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*/g, "");
+
       // Skip files that already import server-only
       const hasServerOnlyImport =
         (analysis.importDetails && analysis.importDetails.some(imp => imp.moduleSpecifier === "server-only")) ||
@@ -105,7 +109,7 @@ export const serverOnlyBoundary: Rule = {
       let hasPrivateEnvUsage = false;
       const dotEnvRegex = /\bprocess\.env\.([a-zA-Z0-9_]+)\b/g;
       let match;
-      while ((match = dotEnvRegex.exec(content)) !== null) {
+      while ((match = dotEnvRegex.exec(contentWithoutComments)) !== null) {
         const varName = match[1];
         if (varName && !varName.startsWith("NEXT_PUBLIC_")) {
           hasPrivateEnvUsage = true;
@@ -114,7 +118,7 @@ export const serverOnlyBoundary: Rule = {
       }
       if (!hasPrivateEnvUsage) {
         const bracketEnvRegex = /\bprocess\.env\s*\[\s*['"]([a-zA-Z0-9_]+)['"]\s*\]/g;
-        while ((match = bracketEnvRegex.exec(content)) !== null) {
+        while ((match = bracketEnvRegex.exec(contentWithoutComments)) !== null) {
           const varName = match[1];
           if (varName && !varName.startsWith("NEXT_PUBLIC_")) {
             hasPrivateEnvUsage = true;
@@ -123,7 +127,7 @@ export const serverOnlyBoundary: Rule = {
         }
       }
 
-      const hasSecretKeyword = SECRET_KEYWORDS.some(kw => content.includes(kw));
+      const hasSecretKeyword = SECRET_KEYWORDS.some(kw => contentWithoutComments.includes(kw));
 
       // --- 3. NODE-ONLY APIS ---
       const importsNodeApi = analysis.importDetails && analysis.importDetails.some(imp => {
@@ -131,7 +135,7 @@ export const serverOnlyBoundary: Rule = {
         const cleanSpec = spec.startsWith("node:") ? spec.slice(5) : spec;
         return NODE_BUILTINS.has(cleanSpec);
       });
-      const hasRequireNodeApi = /require\(['"](node:)?(fs|path|crypto|net|tls|child_process|os|dns|http|https|zlib|stream|readline|process|events)['"]\)/.test(content);
+      const hasRequireNodeApi = /require\(['"](?:node:)?(fs|path|crypto|net|tls|child_process|os|dns|http|https|zlib|stream|readline|process|events)['"]\)/.test(contentWithoutComments);
       const hasNodeApi = importsNodeApi || hasRequireNodeApi;
 
       // --- 4. SERVER CONTEXT INDICATORS ---
@@ -180,8 +184,7 @@ export const serverOnlyBoundary: Rule = {
         hasServerOnlyDependency ||
         hasPrivateEnvUsage ||
         hasSecretKeyword ||
-        hasNodeApi ||
-        importedOnlyByServer
+        hasNodeApi
       ) && !satisfiesNegativeRule;
 
       if (isServerOnlyCandidate) {

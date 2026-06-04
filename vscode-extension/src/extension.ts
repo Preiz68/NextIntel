@@ -1,8 +1,70 @@
 import * as vscode from "vscode";
+import * as fs from "fs";
+import * as path from "path";
 import { Diagnostic as RuleDiagnostic } from "rules";
 import { NextIntelHoverProvider } from "./providers/hoverProvider";
 import { NextIntelCodeLensProvider } from "./providers/codeLensProvider";
 import { buildPanelHtml } from "./providers/panelView";
+
+// ─────────────────────────────────────────────
+// NEXT.JS PROJECT DETECTION
+// ─────────────────────────────────────────────
+
+const isNextJsCache = new Map<string, boolean>();
+
+function isNextJsWorkspace(document: vscode.TextDocument): boolean {
+  const uri = document.uri;
+  if (uri.scheme !== "file") return false;
+
+  const dir = path.dirname(uri.fsPath);
+  if (isNextJsCache.has(dir)) {
+    return isNextJsCache.get(dir)!;
+  }
+
+  const result = checkIsNextJsWorkspace(document);
+  isNextJsCache.set(dir, result);
+  return result;
+}
+
+function checkIsNextJsWorkspace(document: vscode.TextDocument): boolean {
+  try {
+    const uri = document.uri;
+    let dir = path.dirname(uri.fsPath);
+    const root = path.parse(dir).root;
+
+    const folder = vscode.workspace.getWorkspaceFolder(uri);
+    const stopDir = folder ? path.dirname(folder.uri.fsPath) : root;
+
+    while (dir && dir !== stopDir && dir !== root) {
+      const configNames = ["next.config.js", "next.config.mjs", "next.config.ts", "next.config.jsx", "next.config.tsx"];
+      for (const name of configNames) {
+        if (fs.existsSync(path.join(dir, name))) {
+          return true;
+        }
+      }
+
+      const pkgPath = path.join(dir, "package.json");
+      if (fs.existsSync(pkgPath)) {
+        try {
+          const content = fs.readFileSync(pkgPath, "utf8");
+          const pkg = JSON.parse(content);
+          if (pkg.dependencies?.next || pkg.devDependencies?.next) {
+            return true;
+          }
+        } catch {
+          // ignore parsing error
+        }
+      }
+
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  } catch (e) {
+    console.error("Error checking for Next.js workspace:", e);
+  }
+  return false;
+}
 
 // ─────────────────────────────────────────────
 // CONFIG
@@ -271,6 +333,45 @@ export function activate(context: vscode.ExtensionContext) {
   // ─────────────────────────────────────────────
 
   let panel: vscode.WebviewPanel | undefined;
+  let panelColumn: vscode.ViewColumn | undefined;
+  let tabGuardDisposable: vscode.Disposable | undefined;
+
+  /**
+   * Watches for any non-webview tab opening in the same column as the panel
+   * and immediately moves it to ViewColumn.One so the panel column stays
+   * exclusively reserved for the NextIntel details view.
+   */
+  function installTabGuard() {
+    tabGuardDisposable?.dispose();
+    tabGuardDisposable = vscode.window.tabGroups.onDidChangeTabs(async (e) => {
+      if (!panel || panelColumn === undefined) return;
+
+      for (const tab of e.opened) {
+        // Only intercept regular file/text tabs (not the webview itself)
+        if (!(tab.input instanceof vscode.TabInputText)) continue;
+
+        // Check if this tab lives in the same view column as our panel
+        const tabCol = tab.group.viewColumn as vscode.ViewColumn;
+        if (tabCol !== panelColumn) continue;
+
+        // It's a file tab in the panel's column — evict it.
+        const fileUri = (tab.input as vscode.TabInputText).uri;
+        try {
+          // Close the tab in the panel column first
+          await vscode.window.tabGroups.close(tab, true);
+          // Re-open it in column 1 so the user doesn't lose their file
+          const doc = await vscode.workspace.openTextDocument(fileUri);
+          await vscode.window.showTextDocument(doc, {
+            viewColumn: vscode.ViewColumn.One,
+            preserveFocus: false,
+          });
+        } catch {
+          // Silently ignore — the tab may have already been closed
+        }
+      }
+    });
+    context.subscriptions.push(tabGuardDisposable);
+  }
 
   context.subscriptions.push(
     vscode.commands.registerCommand(
@@ -279,10 +380,6 @@ export function activate(context: vscode.ExtensionContext) {
         if (onlyIfOpen && !panel) {
           return;
         }
-
-        const column = vscode.window.activeTextEditor
-          ? vscode.window.activeTextEditor.viewColumn
-          : vscode.ViewColumn.One;
 
         if (panel) {
           panel.reveal(vscode.ViewColumn.Beside, true);
@@ -293,13 +390,32 @@ export function activate(context: vscode.ExtensionContext) {
             { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
             { enableScripts: true, retainContextWhenHidden: true },
           );
-          panel.onDidDispose(
-            () => {
-              panel = undefined;
+
+          // Track which column the panel lives in
+          panelColumn = panel.viewColumn ?? vscode.ViewColumn.Beside;
+
+          // Keep the tracked column updated if the user moves the panel
+          panel.onDidChangeViewState(
+            (e) => {
+              panelColumn = e.webviewPanel.viewColumn ?? panelColumn;
             },
             null,
             context.subscriptions,
           );
+
+          panel.onDidDispose(
+            () => {
+              panel = undefined;
+              panelColumn = undefined;
+              tabGuardDisposable?.dispose();
+              tabGuardDisposable = undefined;
+            },
+            null,
+            context.subscriptions,
+          );
+
+          // Start guarding the panel column immediately
+          installTabGuard();
         }
 
         panel.iconPath = vscode.Uri.parse(
@@ -324,6 +440,7 @@ export function activate(context: vscode.ExtensionContext) {
     if (!isReady) return;
     if (!SUPPORTED_LANGUAGES.has(document.languageId)) return;
     if (document.uri.scheme !== "file") return;
+    if (!isNextJsWorkspace(document)) return;
 
     const key = document.uri.toString();
     const existing = debounceTimers.get(key);
@@ -340,6 +457,14 @@ export function activate(context: vscode.ExtensionContext) {
 
   async function runAnalysis(document: vscode.TextDocument) {
     const key = document.uri.toString();
+    if (!isNextJsWorkspace(document)) {
+      if (documentDiagnostics.has(key)) {
+        documentDiagnostics.delete(key);
+        diagnostics.delete(document.uri);
+        updateDecorations(document);
+      }
+      return;
+    }
     output.appendLine(`🔍 Running analysis on: ${document.fileName}`);
 
     const prev = cancelTokens.get(key);
@@ -428,7 +553,13 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.workspace.onDidChangeTextDocument((e) => schedule(e.document)),
 
-    vscode.workspace.onDidSaveTextDocument((doc) => schedule(doc)),
+    vscode.workspace.onDidSaveTextDocument((doc) => {
+      const filename = path.basename(doc.fileName);
+      if (filename === "package.json" || filename.startsWith("next.config.")) {
+        isNextJsCache.clear();
+      }
+      schedule(doc);
+    }),
 
     vscode.window.onDidChangeActiveTextEditor((editor) => {
       lastEditorChangeTime = Date.now();

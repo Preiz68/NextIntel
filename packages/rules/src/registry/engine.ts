@@ -5,6 +5,24 @@
  */
 
 import { Rule, RuleContext, Diagnostic, ExecutionOwnership, RuntimeEnvironment } from "../types.js";
+
+/**
+ * Returns true only when the file path contains a path segment (or file base name
+ * without extension) that is the standalone word "action" or "actions".
+ * Uses regex word-boundaries applied to each segment so that files like
+ * `satisfaction.ts` or `transaction.ts` are never misclassified.
+ */
+function isActionFilePath(filePath: string): boolean {
+  const ACTION_SEGMENT_RE = /\bactions?\b/i;
+  const normalized = filePath.replace(/\\/g, "/");
+  const segments = normalized.split("/");
+  for (const seg of segments) {
+    // Strip the file extension from the last segment before testing
+    const bare = seg.replace(/\.[^.]+$/, "");
+    if (ACTION_SEGMENT_RE.test(bare)) return true;
+  }
+  return false;
+}
 import { KnowledgeRegistry } from "../knowledge/registry.js";
 import { getRuleSpec } from "./rule-registry.js";
 import { deduplicateDiagnostics as runDeduplication } from "./diagnostic-deduper.js";
@@ -119,7 +137,7 @@ export class RuleEngine {
         kind,
         isClientComponent: node?.isClientComponent === true || kind === "client-component" || kind === "client-util",
         isServerComponent: node?.isServerComponent === true || kind === "server-component" || kind === "server-util",
-        isServerAction: kind === "server-action" || d.file.toLowerCase().includes("action"),
+        isServerAction: kind === "server-action" || isActionFilePath(d.file),
         filePath: d.file,
       };
 
@@ -231,7 +249,7 @@ export function propagateRuntimeContexts(
     if (node?.isClientComponent || kind === "client-component") {
       ownership = "client-entry";
       runtime = "browser";
-    } else if (kind === "server-action" || nodePath.toLowerCase().includes("action")) {
+    } else if (kind === "server-action" || isActionFilePath(nodePath)) {
       ownership = "action-runtime";
       runtime = "node";
     } else if (kind === "page" || kind === "layout" || node?.isServerComponent || kind === "server-component") {
@@ -454,7 +472,7 @@ export function resolveRootCause(
         const isServerAction =
           succNode?.semanticKind === "server-action" ||
           succNode?.isServerAction ||
-          succ.toLowerCase().includes("action");
+          isActionFilePath(succ);
         if (isServerAction) continue;
 
         if (succNode?.isServerComponent || succNode?.semanticKind === "server-component") {
@@ -480,7 +498,7 @@ export function resolveRootCause(
         const isServerAction =
           succNode?.semanticKind === "server-action" ||
           succNode?.isServerAction ||
-          succ.toLowerCase().includes("action");
+          isActionFilePath(succ);
         if (isServerAction) continue;
 
         const succAnalysis = lastAnalyses?.find((a: any) => a.filePath === succ);
@@ -578,7 +596,7 @@ export function buildDependencyPath(
         const isServerAction =
           succNode?.semanticKind === "server-action" ||
           succNode?.isServerAction ||
-          succ.toLowerCase().includes("action");
+          isActionFilePath(succ);
         if (isServerAction) continue;
 
         let isTarget = false;

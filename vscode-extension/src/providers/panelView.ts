@@ -617,15 +617,17 @@ export function buildPanelHtml(
 
     pre {
       padding: 10px 12px;
-      overflow-x: auto;
       background: rgba(0,0,0,0.25);
+      white-space: pre-wrap;
+      word-wrap: break-word;
     }
 
     code {
       font-family: var(--font-mono);
       font-size: 12px;
       color: var(--text);
-      white-space: pre;
+      white-space: pre-wrap;
+      word-wrap: break-word;
     }
 
     /* ── Empty state ─────────────────────────────────────── */

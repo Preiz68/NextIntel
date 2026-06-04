@@ -54,6 +54,29 @@ export const noDynamicApisInStaticRoutes: Rule = {
       return false;
     };
 
+    const hasForceStaticExport = (filePath: string): boolean => {
+      let fileContent = "";
+      try { fileContent = readFileSync(filePath, "utf-8"); } catch { return false; }
+      const project = new Project({ useInMemoryFileSystem: true });
+      const sf = project.createSourceFile("check.ts", fileContent);
+      const varDeclarations = sf.getDescendantsOfKind(SyntaxKind.VariableDeclaration);
+      for (const vd of varDeclarations) {
+        if (vd.getName() === "dynamic") {
+          const init = vd.getInitializer();
+          if (init) {
+            const initText = init.getText().replace(/['"`]/g, "").trim();
+            if (initText === "force-static") {
+              const varStatement = vd.getFirstAncestorByKind(SyntaxKind.VariableStatement);
+              if (varStatement && varStatement.isExported()) {
+                return true;
+              }
+            }
+          }
+        }
+      }
+      return false;
+    };
+
     // Dynamic API names recognized as render-phase triggers
     const DYNAMIC_API_NAMES = ["cookies", "headers", "draftMode", "unstable_noStore", "connection"];
 
@@ -93,7 +116,7 @@ export const noDynamicApisInStaticRoutes: Rule = {
       try { content = readFileSync(filePath, "utf-8"); } catch { continue; }
 
       // Guard: only flag if segment is explicitly opting into force-static
-      const isForceStatic = content.includes("force-static");
+      const isForceStatic = hasForceStaticExport(filePath);
       if (!isForceStatic) continue;
 
       // ── Case 1: Page/layout directly calls a dynamic API ─────────────────

@@ -1,37 +1,64 @@
-import { analyzeFile } from "./packages/engine/src/index.js";
-import { RuleEngine, rules } from "./packages/rules/src/index.js";
-import path from "node:path";
-import fs from "node:fs";
+import { Project, SyntaxKind, Node } from "ts-morph";
 
-const code = `
-"use server";
-export const getSimilarEventBySlug = async (slug: string) => {
-  return [];
-}
-`.trim();
-
-const filePath = path.resolve("./action-temp.ts");
-fs.writeFileSync(filePath, code, "utf8");
-
-try {
-  const analysis = await analyzeFile(filePath, { fileContent: code });
-  const ruleEngine = new RuleEngine();
-  for (const rule of rules) {
-    ruleEngine.registerRule(rule);
+function isMutationAction(actionNode: any): boolean {
+  console.log("Debugging actionNode:", actionNode.getKindName());
+  
+  let actionName = "";
+  if (Node.isFunctionDeclaration(actionNode)) {
+    actionName = actionNode.getName() || "";
+  } else {
+    const varDec = actionNode.getFirstAncestorByKind(SyntaxKind.VariableDeclaration);
+    if (varDec) {
+      actionName = varDec.getName();
+    }
+  }
+  console.log("actionName:", actionName);
+  if (actionName) {
+    const lowerActionName = actionName.toLowerCase();
+    const nameMutationKeywords = ["create", "update", "delete", "insert", "remove", "save", "patch", "upsert", "write", "execute"];
+    if (nameMutationKeywords.some(kw => lowerActionName.includes(kw))) {
+      console.log("Matched function name keyword!");
+      return true;
+    }
   }
 
-  const diagnostics = ruleEngine.run({
-    analyses: [analysis],
-    graph: null as any,
-    nodes: new Map(),
-    edges: [],
-  });
+  const callExprs = actionNode.getDescendantsOfKind(SyntaxKind.CallExpression);
+  console.log("callExprs count:", callExprs.length);
+  for (const call of callExprs) {
+    const expression = call.getExpression();
+    let name = "";
+    if (Node.isPropertyAccessExpression(expression)) {
+      name = expression.getName();
+    } else if (Node.isIdentifier(expression)) {
+      name = expression.getText();
+    }
+    
+    console.log("Call expression name:", name);
+    const lowerName = name.toLowerCase();
+    const mutationKeywords = [
+      "create", "update", "delete", "insert", "remove", "save", "patch",
+      "updateone", "updatemany", "deleteone", "deletemany",
+      "findbyidandupdate", "findbyidanddelete", "insertone", "insertmany",
+      "replaceone", "upsert"
+    ];
+    
+    if (mutationKeywords.some(kw => lowerName.includes(kw))) {
+      console.log("Matched call name keyword!");
+      return true;
+    }
+  }
 
-  console.log("\nDiagnostics returned:");
-  console.log(JSON.stringify(diagnostics, null, 2));
-
-} catch (e) {
-  console.error(e);
-} finally {
-  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  return false;
 }
+
+const project = new Project();
+const sourceFile = project.createSourceFile("temp.ts", `
+  'use server';
+  export async function createEvent(data) {
+    const event = await Event.create(data);
+    return event;
+  }
+`);
+
+const f = sourceFile.getFunction("createEvent");
+console.log("isMutationAction:", isMutationAction(f));

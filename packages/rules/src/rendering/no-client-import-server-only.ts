@@ -3,6 +3,22 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { mapEventToDiagnostic } from "../knowledge/atomicConstraints.js";
 
+/**
+ * Returns true only when the file path contains a path segment that is the
+ * standalone word "action" or "actions", preventing false matches on files
+ * like `satisfaction.ts` or `transactional.ts`.
+ */
+function isActionFilePath(filePath: string): boolean {
+  const ACTION_SEGMENT_RE = /\bactions?\b/i;
+  const normalized = filePath.replace(/\\/g, "/");
+  const segments = normalized.split("/");
+  for (const seg of segments) {
+    const bare = seg.replace(/\.[^.]+$/, "");
+    if (ACTION_SEGMENT_RE.test(bare)) return true;
+  }
+  return false;
+}
+
 export const noClientImportServerOnly: Rule = {
   id: "no-client-import-server-only",
 
@@ -33,7 +49,7 @@ export const noClientImportServerOnly: Rule = {
           const isServerAction =
             succNode?.semanticKind === "server-action" ||
             (succNode as any)?.isServerAction ||
-            succ.toLowerCase().includes("action");
+            isActionFilePath(succ);
           if (isServerAction) continue;
 
           if (!visited.has(succ)) {

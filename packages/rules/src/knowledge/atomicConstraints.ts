@@ -1338,6 +1338,7 @@ const REGISTRY_MAP: Record<string, string> = {
   "CC-HYDRATION-ABUSE-001": "CC-001",
   "DF-009": "MD-002",
   "DF-010": "RE-004",
+  "DYNAMIC_LAYOUT_IMPACT": "ST-002",
 };
 
 export function mapEventToDiagnostic(
@@ -1351,9 +1352,13 @@ export function mapEventToDiagnostic(
   column?: number,
   endColumn?: number
 ): Diagnostic {
-  const constraint = ATOMIC_CONSTRAINTS[constraintId];
+  const lookupId = constraintId.startsWith("DYNAMIC_LAYOUT_IMPACT-")
+    ? "DYNAMIC_LAYOUT_IMPACT"
+    : constraintId;
+
+  const constraint = ATOMIC_CONSTRAINTS[lookupId];
   if (!constraint) {
-    throw new Error(`Constraint not found: ${constraintId}`);
+    throw new Error(`Constraint not found: ${lookupId} (original: ${constraintId})`);
   }
 
   const ERROR_CONSTRAINTS = new Set([
@@ -1395,16 +1400,20 @@ export function mapEventToDiagnostic(
 }
 
 export function resolveExamplesForConstraint(constraintId: string): { valid: string[]; invalid: string[] } | undefined {
-  const constraint = ATOMIC_CONSTRAINTS[constraintId];
+  let lookupId = constraintId;
+  if (lookupId.startsWith("DYNAMIC_LAYOUT_IMPACT-")) {
+    lookupId = "DYNAMIC_LAYOUT_IMPACT";
+  }
+  const constraint = ATOMIC_CONSTRAINTS[lookupId];
   let examples = constraint?.examples;
   if (!examples) {
     try {
       const registry = getRegistry();
-      let regConstraint = registry.getConstraintById(constraintId);
+      let regConstraint = registry.getConstraintById(lookupId);
       if (regConstraint && regConstraint.examples) {
         examples = regConstraint.examples;
       } else {
-        const mappedId = REGISTRY_MAP[constraintId];
+        const mappedId = REGISTRY_MAP[lookupId];
         if (mappedId) {
           regConstraint = registry.getConstraintById(mappedId);
           if (regConstraint && regConstraint.examples) {
@@ -1413,8 +1422,9 @@ export function resolveExamplesForConstraint(constraintId: string): { valid: str
         }
       }
     } catch (err) {
-      console.error(`[resolveExamplesForConstraint] Failed to resolve examples for ${constraintId}:`, err);
+      console.error(`[resolveExamplesForConstraint] Failed to resolve examples for ${lookupId}:`, err);
     }
   }
   return examples;
 }
+

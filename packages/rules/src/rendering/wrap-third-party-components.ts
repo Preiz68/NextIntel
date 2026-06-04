@@ -1,5 +1,7 @@
 import { Rule, RuleContext, Diagnostic } from "../types.js";
 import { readFileSync } from "node:fs";
+import fs from "node:fs";
+import { createRequire } from "node:module";
 import { Project } from "ts-morph";
 import { mapEventToDiagnostic } from "../knowledge/atomicConstraints.js";
 
@@ -45,6 +47,34 @@ function isSafeForRSC(specifier: string): boolean {
   if (SAFE_RSC_PACKAGES.has(specifier)) return true;
   for (const safe of SAFE_RSC_PACKAGES) {
     if (specifier.startsWith(safe + "/") || specifier.startsWith(safe + "#")) return true;
+  }
+  return false;
+}
+
+function isPackageSafeForRSC(specifier: string, currentFilePath: string): boolean {
+  if (isSafeForRSC(specifier)) return true;
+  try {
+    const require = createRequire(currentFilePath);
+    const resolvedPath = require.resolve(specifier);
+    if (resolvedPath && fs.existsSync(resolvedPath)) {
+      const content = fs.readFileSync(resolvedPath, "utf8");
+      if (content.includes('"use client"') || content.includes("'use client'")) {
+        return true;
+      }
+      const hasClientFeatures = 
+        content.includes("useState") ||
+        content.includes("useEffect") ||
+        content.includes("useLayoutEffect") ||
+        content.includes("useContext") ||
+        content.includes("useReducer") ||
+        content.includes("useRef") ||
+        content.includes("addEventListener");
+      if (!hasClientFeatures) {
+        return true;
+      }
+    }
+  } catch {
+    return true;
   }
   return false;
 }
@@ -103,7 +133,7 @@ export const wrapThirdPartyComponents: Rule = {
                   i.namespaceImport === baseTagName,
               );
 
-              if (imp && isThirdParty(imp.moduleSpecifier) && !isSafeForRSC(imp.moduleSpecifier)) {
+              if (imp && isThirdParty(imp.moduleSpecifier) && !isPackageSafeForRSC(imp.moduleSpecifier, analysis.filePath)) {
                 const line = node.getStartLineNumber();
 
                 diagnostics.push(

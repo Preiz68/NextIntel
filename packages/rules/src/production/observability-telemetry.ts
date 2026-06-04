@@ -45,10 +45,13 @@ export const observabilityTelemetry: Rule = {
 
           // Simple check for raw console.log or console.debug
           if (lineText.includes("console.log") || lineText.includes("console.debug")) {
+            const isLocal = !process.env.CI && process.env.NODE_ENV !== "production";
+            const severity = isLocal ? "info" : (constraint?.severity ?? "warning");
+
             diagnostics.push({
               file: analysis.filePath,
               line: i + 1,
-              severity: constraint?.severity ?? "warning",
+              severity,
               ruleId: this.id,
               id: constraint?.id ?? "OB-002",
 

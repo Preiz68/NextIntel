@@ -17,6 +17,9 @@ export const serverActionsVsHandlers: Rule = {
         analysis.executionModel.architectureFlags.includes("route-handler");
       if (!isRouteHandler) continue;
 
+      const fp = analysis.filePath.replace(/\\/g, "/").toLowerCase();
+      if (fp.includes("webhook") || fp.includes("webhooks")) continue;
+
       const hasMutatingMethod =
         analysis.exports.includes("POST") ||
         analysis.exports.includes("PUT") ||

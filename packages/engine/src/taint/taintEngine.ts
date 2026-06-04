@@ -455,16 +455,20 @@ export function analyzeDirectTaints(sourceFile: SourceFile): TaintDetails[] {
     }
 
     if (name === "process" && parent.getText().includes("process.env")) {
-      const guarded = isNodeConditionallyGuarded(id);
-      directTaints.push({
-        state: guarded ? "CONDITIONALLY_TAINTED" : "TAINTED",
-        type: "PROCESS_ENV",
-        source: "process.env",
-        line,
-        expression,
-        derived: false,
-        originFile
-      });
+      const parentText = parent.getText();
+      const isPublicEnv = parentText.includes("NEXT_PUBLIC_");
+      if (!isPublicEnv) {
+        const guarded = isNodeConditionallyGuarded(id);
+        directTaints.push({
+          state: guarded ? "CONDITIONALLY_TAINTED" : "TAINTED",
+          type: "PROCESS_ENV",
+          source: "process.env",
+          line,
+          expression,
+          derived: false,
+          originFile
+        });
+      }
     }
   });
 

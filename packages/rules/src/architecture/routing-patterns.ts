@@ -1177,10 +1177,27 @@ export const routingPatterns: Rule = {
             const args = call.getArguments();
             if (args.length > 0) {
               const firstArg = args[0];
-              const isStaticLiteral = firstArg.isKind(SyntaxKind.StringLiteral) || firstArg.isKind(SyntaxKind.NoSubstitutionTemplateLiteral);
               const firstArgText = firstArg.getText();
-              const isDynamic = !isStaticLiteral || firstArgText.includes("[") || firstArgText.includes("]");
-              if (isDynamic) {
+              let hasBrackets = firstArgText.includes("[") || firstArgText.includes("]");
+              if (!hasBrackets && firstArg.isKind(SyntaxKind.Identifier)) {
+                const symbol = firstArg.getSymbol();
+                if (symbol) {
+                  const decls = symbol.getDeclarations();
+                  if (decls.length > 0) {
+                    const decl = decls[0];
+                    if (decl.isKind(SyntaxKind.VariableDeclaration)) {
+                      const init = decl.getInitializer();
+                      if (init) {
+                        const initText = init.getText();
+                        if (initText.includes("[") || initText.includes("]")) {
+                          hasBrackets = true;
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+              if (hasBrackets) {
                 const hasSecondArg = args.length >= 2;
                 const secondArgText = hasSecondArg ? args[1].getText().replace(/['"`]/g, "").trim() : "";
                 if (secondArgText !== "page" && secondArgText !== "layout") {

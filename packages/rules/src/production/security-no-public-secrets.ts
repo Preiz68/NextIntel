@@ -40,13 +40,17 @@ export const securityNoPublicSecrets: Rule = {
     for (const analysis of context.analyses) {
       try {
         const content = readFileSync(analysis.filePath, "utf-8");
-        const lines = content.split("\n");
+        // Strip block comments while preserving newlines to maintain line numbers
+        const cleanContent = content.replace(/\/\*[\s\S]*?\*\//g, (match) => match.replace(/[^\r\n]/g, " "));
+        const lines = cleanContent.split("\n");
 
         for (let i = 0; i < lines.length; i++) {
           const lineText = lines[i]!;
+          // Strip single-line comments
+          const cleanedLine = lineText.replace(/\/\/.*$/, "");
           
           for (const pattern of forbiddenPatterns) {
-            if (lineText.includes(pattern)) {
+            if (cleanedLine.includes(pattern)) {
               diagnostics.push({
                 file: analysis.filePath,
                 line: i + 1,

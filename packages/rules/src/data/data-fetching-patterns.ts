@@ -1,9 +1,66 @@
 import { Rule, RuleContext, Diagnostic } from "../types.js";
 import { readFileSync, existsSync } from "node:fs";
 import { Project, SyntaxKind, Node } from "ts-morph";
+import path from "node:path";
 import { mapEventToDiagnostic } from "../knowledge/atomicConstraints.js";
 import { isWaterfallCandidate } from "../utils/waterfall.js";
-import path from "node:path";
+
+function isStaticRouteContext(filePath: string, analyses: any[], graph: any): boolean {
+  const hasForceStatic = (pathToCheck: string): boolean => {
+    const analysis = analyses.find(a => a.filePath === pathToCheck);
+    if (!analysis) return false;
+    try {
+      const fileContent = readFileSync(pathToCheck, "utf-8");
+      if (!fileContent.includes("force-static")) return false;
+      const project = new Project({ useInMemoryFileSystem: true });
+      const sf = project.createSourceFile("check.ts", fileContent);
+      const varDeclarations = sf.getDescendantsOfKind(SyntaxKind.VariableDeclaration);
+      for (const vd of varDeclarations) {
+        if (vd.getName() === "dynamic") {
+          const init = vd.getInitializer();
+          if (init) {
+            const initText = init.getText().replace(/['"`]/g, "").trim();
+            if (initText === "force-static") {
+              const varStatement = vd.getFirstAncestorByKind(SyntaxKind.VariableStatement);
+              if (varStatement && varStatement.isExported()) {
+                return true;
+              }
+            }
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return false;
+  };
+
+  if (hasForceStatic(filePath)) return true;
+
+  if (graph) {
+    const visited = new Set<string>();
+    const queue = [filePath];
+    while (queue.length > 0) {
+      const curr = queue.shift()!;
+      if (visited.has(curr)) continue;
+      visited.add(curr);
+
+      const base = path.basename(curr).toLowerCase();
+      const isPageOrLayout = base.startsWith("page.") || base.startsWith("layout.");
+      if (isPageOrLayout && hasForceStatic(curr)) {
+        return true;
+      }
+
+      const predecessors = graph.predecessors(curr) || [];
+      for (const pred of predecessors) {
+        queue.push(pred);
+      }
+    }
+  }
+
+  return false;
+}
+
 /**
  * Rule: data-fetching-patterns
  *
@@ -620,7 +677,7 @@ export const dataFetchingPatterns: Rule = {
             content.includes("'use cache'") ||
             content.includes("unstable_cache");
 
-          if (containsDbAccess && !hasCacheDirective) {
+          if (containsDbAccess && !hasCacheDirective && isStaticRouteContext(analysis.filePath, context.analyses, context.graph)) {
             diagnostics.push(
               mapEventToDiagnostic(
                 "CACHE_CONFLICT_DETECTED",
@@ -743,6 +800,19 @@ export const dataFetchingPatterns: Rule = {
             const bodyText = decl.getText();
             const hasDbQuery = /\b(db\.\w+|prisma\.\w+|drizzle\.\w+)\b/.test(bodyText);
             if (!hasDbQuery) continue;
+
+            // Exclude database mutations/writes from caching recommendations
+            const lowercaseBody = bodyText.toLowerCase();
+            const mutationKeywords = [
+              "insert", "update", "delete", "create", "upsert",
+              "remove", "save", "patch", "updateone", "updatemany",
+              "deleteone", "deletemany", "findbyidandupdate", "findbyidanddelete",
+              "insertone", "insertmany", "replaceone"
+            ];
+            const isMutation = mutationKeywords.some(kw => 
+              lowercaseBody.includes("." + kw) || lowercaseBody.includes(kw + "(")
+            );
+            if (isMutation) continue;
 
             let isWrapped = false;
             const line = decl.getStartLineNumber();

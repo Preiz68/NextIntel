@@ -76,7 +76,10 @@ export async function runRulesTests() {
       fs.writeFileSync(fileE, `revalidatePath('/blog/static');`, "utf8");
 
       const fileF = path.join(tempDir, "rv003-f.ts");
-      fs.writeFileSync(fileF, `revalidatePath(myVar);`, "utf8");
+      fs.writeFileSync(fileF, `const myVar = '/blog/[id]';\nrevalidatePath(myVar);`, "utf8");
+
+      const fileH = path.join(tempDir, "rv003-h.ts");
+      fs.writeFileSync(fileH, `const anotherVar = '/blog/123';\nrevalidatePath(anotherVar);`, "utf8");
 
       const context: RuleContext = {
         analyses: [
@@ -86,6 +89,7 @@ export async function runRulesTests() {
           createMockAnalysis(fileD),
           createMockAnalysis(fileE),
           createMockAnalysis(fileF),
+          createMockAnalysis(fileH),
         ],
         graph: new Graph(),
         nodes: new Map(),
@@ -96,13 +100,14 @@ export async function runRulesTests() {
       const diagnostics = routingPatterns.run(context);
       const rv003Diags = diagnostics.filter(d => d.id === "RV-003");
 
-      assert.strictEqual(rv003Diags.length, 4, "Should find exactly 4 RV-003 violations");
-      assert.ok(rv003Diags.some(d => d.file === fileA), "Should flag string concat");
-      assert.ok(rv003Diags.some(d => d.file === fileB), "Should flag template string with expression");
+      assert.strictEqual(rv003Diags.length, 2, "Should find exactly 2 RV-003 violations (only bracket templates)");
       assert.ok(rv003Diags.some(d => d.file === fileC), "Should flag static string with brackets");
-      assert.ok(rv003Diags.some(d => d.file === fileF), "Should flag raw identifier variable");
+      assert.ok(rv003Diags.some(d => d.file === fileF), "Should flag variable resolving to template with brackets");
+      assert.ok(!rv003Diags.some(d => d.file === fileA), "Should NOT flag string concat");
+      assert.ok(!rv003Diags.some(d => d.file === fileB), "Should NOT flag template string with expression");
       assert.ok(!rv003Diags.some(d => d.file === fileD), "Should NOT flag valid page revalidatePath");
       assert.ok(!rv003Diags.some(d => d.file === fileE), "Should NOT flag valid static path");
+      assert.ok(!rv003Diags.some(d => d.file === fileH), "Should NOT flag variable resolving to literal path");
     }
 
     // =========================================================================
@@ -442,6 +447,303 @@ export async function runRulesTests() {
       assert.ok(df005Diags.some(d => d.file === fileD), "Should flag user-defined async I/O waterfall in DF-005");
     }
 
+    // =========================================================================
+    // 5. Test Server Action Auth (Mutation vs Read checks)
+    // =========================================================================
+    {
+      const fileA = path.join(tempDir, "action-read.ts");
+      fs.writeFileSync(fileA, `
+        'use server';
+        export async function getEvents() {
+          const events = await Event.find({});
+          return events;
+        }
+      `, "utf8");
+
+      const fileB = path.join(tempDir, "action-mutation.ts");
+      fs.writeFileSync(fileB, `
+        'use server';
+        export async function createEvent(data) {
+          const event = await Event.create(data);
+          return event;
+        }
+      `, "utf8");
+
+      const fileC = path.join(tempDir, "action-mutation-sql.ts");
+      fs.writeFileSync(fileC, `
+        'use server';
+        export async function runQuery(sql) {
+          const result = await db.query('UPDATE users SET name = ?', [sql]);
+          return result;
+        }
+      `, "utf8");
+
+      const analyzer = await import("engine");
+      const analysisA = await analyzer.analyzeFile(fileA);
+      const analysisB = await analyzer.analyzeFile(fileB);
+      const analysisC = await analyzer.analyzeFile(fileC);
+
+      const re = new RuleEngine();
+      const { serverActionsAuth } = await import("./architecture/server-actions-auth.js");
+      re.registerRule(serverActionsAuth);
+
+      const results = re.run({
+        analyses: [analysisA, analysisB, analysisC],
+        graph: null,
+        nodes: new Map(),
+        edges: [],
+      });
+
+      const actionAuthDiags = results.filter(d => d.id === "SA-AUTH-001");
+      
+      const fileANorm = fileA.replace(/\\/g, "/");
+      const fileBNorm = fileB.replace(/\\/g, "/");
+      const fileCNorm = fileC.replace(/\\/g, "/");
+
+      assert.ok(!actionAuthDiags.some(d => d.file === fileANorm), "Should NOT flag read-only server action in SA-AUTH-001");
+      assert.ok(actionAuthDiags.some(d => d.file === fileBNorm), "Should flag mutation server action in SA-AUTH-001");
+      assert.ok(actionAuthDiags.some(d => d.file === fileCNorm), "Should flag SQL mutation server action in SA-AUTH-001");
+    }
+
+    // =========================================================================
+    // 6. Test server-actions-no-reads (Task 9 & 10)
+    // =========================================================================
+    {
+      const fileA = path.join(tempDir, "sa-no-reads-a.ts");
+      fs.writeFileSync(fileA, `
+        'use server';
+        export async function getProfile() {
+          // Read-only server action: should warn
+          return db.user.findUnique({ where: { id: 1 } });
+        }
+      `, "utf8");
+
+      const fileB = path.join(tempDir, "sa-no-reads-b.ts");
+      fs.writeFileSync(fileB, `
+        'use server';
+        export async function getProfileWithSideEffects() {
+          // Has mutation side effect, should NOT warn
+          await db.logs.create({ data: { accessed: true } });
+          return db.user.findUnique({ where: { id: 1 } });
+        }
+      `, "utf8");
+
+      const fileC = path.join(tempDir, "sa-no-reads-c.ts");
+      fs.writeFileSync(fileC, `
+        'use server';
+        export async function getUpdatedProfile() {
+          // Name contains keyword as substring but has no mutation: should warn
+          return db.user.findUnique({ where: { id: 1 } });
+        }
+      `, "utf8");
+
+      const fileD = path.join(tempDir, "sa-no-reads-d.ts");
+      fs.writeFileSync(fileD, `
+        'use server';
+        export async function updateProfile() {
+          // Mutation action name: should NOT warn
+          return db.user.findUnique({ where: { id: 1 } });
+        }
+      `, "utf8");
+
+      const analyzer = await import("engine");
+      const analysisA = await analyzer.analyzeFile(fileA);
+      const analysisB = await analyzer.analyzeFile(fileB);
+      const analysisC = await analyzer.analyzeFile(fileC);
+      const analysisD = await analyzer.analyzeFile(fileD);
+
+      const re = new RuleEngine();
+      const { serverActionsNoReads } = await import("./architecture/server-actions-no-reads.js");
+      re.registerRule(serverActionsNoReads);
+
+      const results = re.run({
+        analyses: [analysisA, analysisB, analysisC, analysisD],
+        graph: null,
+        nodes: new Map(),
+        edges: [],
+      });
+
+      const diags = results.filter(d => d.ruleId === "server-actions-no-reads");
+      assert.strictEqual(diags.length, 2, "Should find exactly 2 server-actions-no-reads warnings");
+      
+      const fileANorm = fileA.replace(/\\/g, "/");
+      const fileBNorm = fileB.replace(/\\/g, "/");
+      const fileCNorm = fileC.replace(/\\/g, "/");
+      const fileDNorm = fileD.replace(/\\/g, "/");
+
+      assert.ok(diags.some(d => d.file === fileANorm), "Should warn on getProfile");
+      assert.ok(diags.some(d => d.file === fileCNorm), "Should warn on getUpdatedProfile (substring name check)");
+      assert.ok(!diags.some(d => d.file === fileBNorm), "Should NOT warn on getProfileWithSideEffects");
+      assert.ok(!diags.some(d => d.file === fileDNorm), "Should NOT warn on updateProfile (mutation name check)");
+    }
+
+    // =========================================================================
+    // 7. Test streaming-suspense-boundaries (Task 11)
+    // =========================================================================
+    {
+      const dirA = path.join(tempDir, "layoutA");
+      const dirB = path.join(tempDir, "layoutB");
+      fs.mkdirSync(dirA, { recursive: true });
+      fs.mkdirSync(dirB, { recursive: true });
+
+      const fileA = path.join(dirA, "layout.tsx");
+      fs.writeFileSync(fileA, `
+        import { cookies } from "next/headers";
+        export default async function Layout({ children }) {
+          const c = cookies();
+          const token = c.get("token");
+          if (token) {
+            return <Dashboard>{children}</Dashboard>;
+          }
+          return <Login />;
+        }
+      `, "utf8");
+
+      const fileB = path.join(dirB, "layout.tsx");
+      fs.writeFileSync(fileB, `
+        import { cookies } from "next/headers";
+        export default async function Layout({ children }) {
+          const c = cookies();
+          const token = c.get("token");
+          if (someOtherLoadingState) {
+            return <Spinner />;
+          }
+          return <div>{children}</div>;
+        }
+      `, "utf8");
+
+      const analyzer = await import("engine");
+      const analysisA = await analyzer.analyzeFile(fileA);
+      const analysisB = await analyzer.analyzeFile(fileB);
+
+      // Mark them as layouts and node runtime triggers
+      analysisA.filePath = analysisA.filePath.replace(/\\/g, "/");
+      analysisB.filePath = analysisB.filePath.replace(/\\/g, "/");
+      analysisA.isClientComponent = false;
+      analysisB.isClientComponent = false;
+      analysisA.executionModel = { componentType: "server", usesServerApis: ["cookies"] };
+      analysisB.executionModel = { componentType: "server", usesServerApis: ["cookies"] };
+
+      const re = new RuleEngine();
+      const { streamingSuspenseBoundaries } = await import("./rendering/streaming-suspense-boundaries.js");
+      re.registerRule(streamingSuspenseBoundaries);
+
+      const results = re.run({
+        analyses: [analysisA, analysisB],
+        graph: null,
+        nodes: new Map(),
+        edges: [],
+      });
+
+      const criticalDiag = results.find(d => d.file === analysisA.filePath);
+      const uncriticalDiag = results.find(d => d.file === analysisB.filePath);
+
+      assert.ok(criticalDiag);
+      assert.strictEqual(criticalDiag.id, "DYNAMIC_LAYOUT_IMPACT-CRITICAL");
+
+      assert.ok(uncriticalDiag);
+      assert.notStrictEqual(uncriticalDiag.id, "DYNAMIC_LAYOUT_IMPACT-CRITICAL");
+    }
+
+    // =========================================================================
+    // 8. Test no-use-cache-in-client-components (Task 12)
+    // =========================================================================
+    {
+      const fileA = path.join(tempDir, "client-with-use-cache.tsx");
+      fs.writeFileSync(fileA, `
+        "use client";
+        export default function ClientComp() {
+          "use cache";
+          return <div>Client</div>;
+        }
+      `, "utf8");
+
+      const fileB = path.join(tempDir, "client-with-use-cache-comment.tsx");
+      fs.writeFileSync(fileB, `
+        "use client";
+        // We do not use "use cache" directive here because it is a client component.
+        export default function ClientComp() {
+          return <div>Client</div>;
+        }
+      `, "utf8");
+
+      const analyzer = await import("engine");
+      const analysisA = await analyzer.analyzeFile(fileA);
+      const analysisB = await analyzer.analyzeFile(fileB);
+
+      analysisA.isClientComponent = true;
+      analysisB.isClientComponent = true;
+      analysisA.executionModel = { componentType: "client" };
+      analysisB.executionModel = { componentType: "client" };
+
+      const re = new RuleEngine();
+      const { noUseCacheInClientComponents } = await import("./rendering/no-use-cache-in-client-components.js");
+      re.registerRule(noUseCacheInClientComponents);
+
+      const results = re.run({
+        analyses: [analysisA, analysisB],
+        graph: null,
+        nodes: new Map(),
+        edges: [],
+      });
+
+      assert.strictEqual(results.length, 1);
+      assert.strictEqual(results[0].file, analysisA.filePath);
+    }
+
+    // =========================================================================
+    // 9. Test no-large-data-imports-in-client (Task 25 AST deferred check)
+    // =========================================================================
+    {
+      const fileA = path.join(tempDir, "large-data-render-use.tsx");
+      fs.writeFileSync(fileA, `
+        "use client";
+        import myData from "./large.json";
+        export default function ClientComp() {
+          return <div>{myData.length}</div>;
+        }
+      `, "utf8");
+
+      const fileB = path.join(tempDir, "large-data-deferred-use.tsx");
+      fs.writeFileSync(fileB, `
+        "use client";
+        import myData from "./large.json";
+        import { useCallback } from "react";
+        export default function ClientComp() {
+          const onClick = useCallback(() => {
+            console.log(myData);
+          }, []);
+          return <button onClick={onClick}>Click</button>;
+        }
+      `, "utf8");
+
+      const largeJsonFile = path.join(tempDir, "large.json");
+      fs.writeFileSync(largeJsonFile, JSON.stringify(new Array(5000).fill({ id: 1, name: "test" })), "utf8");
+
+      const context: RuleContext = {
+        analyses: [
+          createMockAnalysis(fileA, {
+            isClientComponent: true,
+            importDetails: [{ moduleSpecifier: "./large.json", defaultImport: "myData", isTypeOnly: false }]
+          }),
+          createMockAnalysis(fileB, {
+            isClientComponent: true,
+            importDetails: [{ moduleSpecifier: "./large.json", defaultImport: "myData", isTypeOnly: false }]
+          }),
+        ],
+        graph: new Graph(),
+        nodes: new Map(),
+        edges: [],
+        knowledgeRegistry: { getConstraint: () => null } as any
+      };
+
+      const { noLargeDataImportsInClient } = await import("./rendering/no-large-data-imports-in-client.js");
+      const diags = noLargeDataImportsInClient.run(context);
+
+      assert.ok(diags.some(d => d.file === fileA), "Should warn on render-time use of large data");
+      assert.ok(!diags.some(d => d.file === fileB), "Should NOT warn on deferred callback use of large data");
+    }
+
     console.log("✅ Rules unit tests passed!");
   } finally {
     // Cleanup temporary files
@@ -451,4 +753,11 @@ export async function runRulesTests() {
       // ignore
     }
   }
+}
+
+if (process.argv[1] && (process.argv[1].endsWith("rules.test.ts") || process.argv[1].endsWith("rules.test.js"))) {
+  runRulesTests().catch(err => {
+    console.error(err);
+    process.exit(1);
+  });
 }

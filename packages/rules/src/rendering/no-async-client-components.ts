@@ -31,7 +31,7 @@ export const noAsyncClientComponents: Rule = {
       if (!content.includes("async")) continue;
 
       const project = new Project();
-      const sourceFile = project.createSourceFile("temp.ts", content);
+      const sourceFile = project.createSourceFile("temp.tsx", content);
 
       sourceFile.forEachDescendant((node) => {
         const kind = node.getKind();
@@ -59,19 +59,69 @@ export const noAsyncClientComponents: Rule = {
               }
             }
 
-            // Capitalized function name implies React component
             if (name && name.charAt(0) === name.charAt(0).toUpperCase()) {
-              const line = node.getStartLineNumber();
-              diagnostics.push(
-                mapEventToDiagnostic(
-                  "CLIENT_COMPONENT_ASYNC_EXECUTION",
-                  "CC-ASYNC-CLIENT-001",
-                  this.id,
-                  analysis.filePath,
-                  line,
-                  `Client Component '${name}' is declared as an async function. Next.js Client Components cannot be async.`
-                )
-              );
+              const returnsJsx = (() => {
+                const returnStatements = node.getDescendantsOfKind(SyntaxKind.ReturnStatement);
+                for (const ret of returnStatements) {
+                  const expr = ret.getExpression();
+                  if (expr) {
+                    const exprKind = expr.getKindName();
+                    if (
+                      exprKind === "JsxElement" ||
+                      exprKind === "JsxSelfClosingElement" ||
+                      exprKind === "JsxFragment"
+                    ) {
+                      return true;
+                    }
+                    const exprText = expr.getText();
+                    if (/<[A-Za-z]/.test(exprText)) {
+                      return true;
+                    }
+                  }
+                }
+                if (node.getKind() === SyntaxKind.ArrowFunction) {
+                  const body = (node as any).getBody();
+                  if (body) {
+                    const bodyKind = body.getKindName();
+                    if (
+                      bodyKind === "JsxElement" ||
+                      bodyKind === "JsxSelfClosingElement" ||
+                      bodyKind === "JsxFragment"
+                    ) {
+                      return true;
+                    }
+                  }
+                }
+                return false;
+              })();
+
+              const isDefaultExport = (() => {
+                if (node.getKind() === SyntaxKind.FunctionDeclaration) {
+                  return (node as any).isDefaultExport() || ((node as any).isExported() && name === "default");
+                }
+                const parent = node.getParent();
+                if (parent && parent.getKind() === SyntaxKind.VariableDeclaration) {
+                  const varStatement = parent.getFirstAncestorByKind(SyntaxKind.VariableStatement);
+                  if (varStatement) {
+                    return varStatement.isDefaultExport();
+                  }
+                }
+                return false;
+              })();
+
+              if (returnsJsx || isDefaultExport) {
+                const line = node.getStartLineNumber();
+                diagnostics.push(
+                  mapEventToDiagnostic(
+                    "CLIENT_COMPONENT_ASYNC_EXECUTION",
+                    "CC-ASYNC-CLIENT-001",
+                    this.id,
+                    analysis.filePath,
+                    line,
+                    `Client Component '${name}' is declared as an async function. Next.js Client Components cannot be async.`
+                  )
+                );
+              }
             }
           }
         }

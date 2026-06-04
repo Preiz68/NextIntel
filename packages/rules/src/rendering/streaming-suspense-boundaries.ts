@@ -1,6 +1,7 @@
 import { Rule, RuleContext, Diagnostic } from "../types.js";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { Project, SyntaxKind, Node } from "ts-morph";
 
 /**
  * Rule: streaming-suspense-boundaries
@@ -23,6 +24,90 @@ const COSMETIC_PATTERNS = /\b(theme|lang|locale|color|colour|mode|currency|timez
 const AUTH_PATTERNS     = /\b(auth|token|session|jwt|user|role|access|identity|credential|permission|claim|bearer|refresh|csrf|xsrf|sid)\b/i;
 
 type CookiePurpose = "COSMETIC" | "AUTH" | "CRITICAL" | "UNKNOWN";
+
+function checkConditionalCookieRender(content: string): boolean {
+  if (!content.includes("cookies") && !content.includes("headers")) {
+    return false;
+  }
+
+  const project = new Project();
+  const sourceFile = project.createSourceFile("temp.tsx", content);
+
+  const cookieVars = new Set<string>();
+
+  sourceFile.getDescendantsOfKind(SyntaxKind.VariableDeclaration).forEach((decl) => {
+    const name = decl.getName();
+    const init = decl.getInitializer();
+    if (!init) return;
+
+    const initText = init.getText();
+    if (
+      initText.includes("cookies(") ||
+      initText.includes("headers(") ||
+      Array.from(cookieVars).some((v) => initText.includes(v))
+    ) {
+      cookieVars.add(name);
+    }
+  });
+
+  let foundCritical = false;
+
+  const checkConditionAndBody = (conditionNode: Node, bodyNode: Node) => {
+    const condText = conditionNode.getText();
+    const referencesCookie =
+      condText.includes("cookies(") ||
+      condText.includes("headers(") ||
+      Array.from(cookieVars).some((v) => {
+        const regex = new RegExp(`\\b${v}\\b`);
+        return regex.test(condText);
+      });
+
+    if (referencesCookie) {
+      const hasJsx =
+        bodyNode.getDescendantsOfKind(SyntaxKind.JsxSelfClosingElement).some((el) => {
+          const tagName = el.getTagNameNode().getText();
+          return /^[A-Z]/.test(tagName);
+        }) ||
+        bodyNode.getDescendantsOfKind(SyntaxKind.JsxElement).some((el) => {
+          const tagName = el.getOpeningElement().getTagNameNode().getText();
+          return /^[A-Z]/.test(tagName);
+        });
+
+      if (hasJsx) {
+        foundCritical = true;
+      }
+    }
+  };
+
+  sourceFile.getDescendantsOfKind(SyntaxKind.IfStatement).forEach((ifStmt) => {
+    const cond = ifStmt.getExpression();
+    const thenStatement = ifStmt.getThenStatement();
+    const elseStatement = ifStmt.getElseStatement();
+
+    if (thenStatement) checkConditionAndBody(cond, thenStatement);
+    if (elseStatement) checkConditionAndBody(cond, elseStatement);
+  });
+
+  sourceFile.getDescendantsOfKind(SyntaxKind.ConditionalExpression).forEach((ternary) => {
+    const cond = ternary.getCondition();
+    const whenTrue = ternary.getWhenTrue();
+    const whenFalse = ternary.getWhenFalse();
+
+    checkConditionAndBody(cond, whenTrue);
+    checkConditionAndBody(cond, whenFalse);
+  });
+
+  sourceFile.getDescendantsOfKind(SyntaxKind.BinaryExpression).forEach((bin) => {
+    const op = bin.getOperatorToken().getKind();
+    if (op === SyntaxKind.AmpersandAmpersand || op === SyntaxKind.BarBar) {
+      const left = bin.getLeft();
+      const right = bin.getRight();
+      checkConditionAndBody(left, right);
+    }
+  });
+
+  return foundCritical;
+}
 
 /**
  * Determine the purpose of the cookie access by inspecting:
@@ -55,10 +140,7 @@ function classifyCookiePurpose(content: string): CookiePurpose {
   }
 
   // Check if the layout conditionally renders large subtrees based on cookie values
-  // Pattern: if (cookieVar) { ... <Component /> ... } with JSX inside
-  const hasConditionalRender =
-    /if\s*\([^)]*\)\s*\{[^}]*<[A-Z]/.test(content) &&
-    (content.includes("cookies()") || content.includes("cookies("));
+  const hasConditionalRender = checkConditionalCookieRender(content);
 
   if (hasConditionalRender) return "CRITICAL";
 
@@ -122,7 +204,7 @@ export const streamingSuspenseBoundaries: Rule = {
   run(context: RuleContext): Diagnostic[] {
     const diagnostics: Diagnostic[] = [];
 
-    const constraint = context.knowledgeRegistry.getConstraint("streaming", "DYNAMIC_LAYOUT_IMPACT");
+    const constraint = context.knowledgeRegistry.getConstraint("streaming", "ST-002");
 
     const whyItMatters = constraint?.whyItMatters ?? "Calling cookies() or headers() inside a root layout block forces the layout into dynamic on-demand rendering.";
     const quickFixes = constraint?.quickFixes ?? [];

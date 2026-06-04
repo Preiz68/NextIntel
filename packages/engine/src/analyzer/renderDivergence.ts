@@ -30,8 +30,75 @@ export function doesValueAffectRender(id: Node): boolean {
 
     // Check if the current node is within a ReturnStatement
     if (parent.isKind(SyntaxKind.ReturnStatement)) {
-      // If returning from a function, it escapes.
-      // E.g. helper utility or getter function returns the browser value.
+      const containingFunc = parent.getFirstAncestor((n) =>
+        n.isKind(SyntaxKind.FunctionDeclaration) ||
+        n.isKind(SyntaxKind.ArrowFunction) ||
+        n.isKind(SyntaxKind.FunctionExpression) ||
+        n.isKind(SyntaxKind.MethodDeclaration)
+      );
+
+      if (containingFunc) {
+        let isReactComponent = false;
+        let funcName = "";
+        
+        if (containingFunc.isKind(SyntaxKind.FunctionDeclaration)) {
+          funcName = containingFunc.getName() || "";
+        } else if (containingFunc.isKind(SyntaxKind.MethodDeclaration)) {
+          funcName = containingFunc.getName() || "";
+        } else {
+          const varDecl = containingFunc.getFirstAncestorByKind(SyntaxKind.VariableDeclaration);
+          if (varDecl) {
+            funcName = varDecl.getName();
+          }
+        }
+
+        if (funcName && funcName[0] === funcName[0].toUpperCase()) {
+          isReactComponent = true;
+        }
+
+        if (isReactComponent) {
+          return true;
+        }
+
+        if (!visited.has(containingFunc)) {
+          visited.add(containingFunc);
+
+          let functionNameNode: Node | undefined;
+          if (containingFunc.isKind(SyntaxKind.FunctionDeclaration) || containingFunc.isKind(SyntaxKind.MethodDeclaration)) {
+            functionNameNode = containingFunc.getNameNode();
+          } else {
+            const varDecl = containingFunc.getFirstAncestorByKind(SyntaxKind.VariableDeclaration);
+            if (varDecl) {
+              functionNameNode = varDecl.getNameNode();
+            }
+          }
+
+          if (functionNameNode && functionNameNode.isKind(SyntaxKind.Identifier)) {
+            const refs = functionNameNode.findReferencesAsNodes();
+            let anyRefAffectsRender = false;
+            for (const ref of refs) {
+              if (ref === functionNameNode) continue;
+              
+              const callAncestor = ref.getFirstAncestorByKind(SyntaxKind.CallExpression);
+              if (callAncestor && callAncestor.getExpression().getText() === funcName) {
+                if (doesValueAffectRender(callAncestor)) {
+                  anyRefAffectsRender = true;
+                  break;
+                }
+              } else {
+                if (doesValueAffectRender(ref)) {
+                  anyRefAffectsRender = true;
+                  break;
+                }
+              }
+            }
+            if (anyRefAffectsRender) {
+              return true;
+            }
+          }
+        }
+        continue;
+      }
       return true;
     }
 

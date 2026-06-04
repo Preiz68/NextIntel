@@ -59,6 +59,7 @@ export const ServerComponentBrowserAPIConstraint: Constraint = {
     for (const a of analyses) {
       if (a.runtimeType === "SERVER_COMPONENT") {
         for (const b of a.browserAPIs || []) {
+          if (b.isGuarded) continue;
           violations.push({
             id: "SC-BROWSER-API-001",
             ruleId: "no-browser-api-in-server-components",

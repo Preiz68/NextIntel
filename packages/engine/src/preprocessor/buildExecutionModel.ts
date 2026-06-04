@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createRequire } from "node:module";
 import type { FileAnalysis } from "../analyzer/types.js";
 import type { FrameworkExecutionModel } from "./types.js";
 import type { SourceFile } from "ts-morph";
@@ -7,6 +8,9 @@ import type { SourceFile } from "ts-morph";
 function isNonSerializable(expr: any): boolean {
   if (!expr) return false;
   const kind = expr.getKindName();
+  if (kind === "JsxElement" || kind === "JsxSelfClosingElement" || kind === "JsxFragment") {
+    return false;
+  }
   if (
     kind === "ArrowFunction" ||
     kind === "FunctionExpression" ||
@@ -61,6 +65,62 @@ function isNonSerializable(expr: any): boolean {
       // ignore
     }
   }
+  return false;
+}
+
+function resolveImportFilePath(currentFilePath: string, specifier: string): string | null {
+  if (!specifier.startsWith(".")) return null;
+  const currentDir = path.dirname(currentFilePath);
+  const absolutePathNoExt = path.resolve(currentDir, specifier);
+  const extensions = [".tsx", ".ts", ".jsx", ".js"];
+  for (const ext of extensions) {
+    const p = absolutePathNoExt + ext;
+    if (fs.existsSync(p)) return p;
+    const indexP = path.join(absolutePathNoExt, "index" + ext);
+    if (fs.existsSync(indexP)) return indexP;
+  }
+  return null;
+}
+
+function isClientComponentFile(filePath: string): boolean {
+  try {
+    if (fs.existsSync(filePath)) {
+      const content = fs.readFileSync(filePath, "utf-8").trim();
+      const firstLine = content.split("\n")[0]?.trim().replace(/;$/, "");
+      return firstLine === '"use client"' || firstLine === "'use client'";
+    }
+  } catch {
+    // ignore
+  }
+  return false;
+}
+
+function isClientComponentBoundaryOffline(tagName: string, filePath: string, importDetails: any[]): boolean {
+  let baseTagName = tagName;
+  if (tagName.includes(".")) {
+    baseTagName = tagName.split(".")[0] || tagName;
+  }
+
+  const imp = importDetails.find((i: any) =>
+    i.defaultImport === baseTagName ||
+    i.namedImports.includes(baseTagName) ||
+    i.namespaceImport === baseTagName
+  );
+
+  if (!imp) return false;
+
+  const specifier = imp.moduleSpecifier;
+  if (specifier.startsWith(".") || specifier.startsWith("/") || specifier.startsWith("@/")) {
+    const resolvedPath = resolveImportFilePath(filePath, specifier);
+    if (resolvedPath) {
+      return isClientComponentFile(resolvedPath);
+    }
+  } else {
+    const SAFE_RSC_PACKAGES = ["lucide-react", "heroicons", "react-icons", "clsx", "cva", "tailwind-merge"];
+    const isSafe = SAFE_RSC_PACKAGES.some(pkg => specifier === pkg || specifier.startsWith(pkg + "/"));
+    return !isSafe;
+  }
+
   return false;
 }
 
@@ -141,6 +201,34 @@ function isSafeForRSC(specifier: string): boolean {
     if (specifier.startsWith(safe + "/") || specifier.startsWith(safe + "#")) {
       return true;
     }
+  }
+  return false;
+}
+
+function isPackageSafeForRSC(specifier: string, currentFilePath: string): boolean {
+  if (isSafeForRSC(specifier)) return true;
+  try {
+    const require = createRequire(currentFilePath);
+    const resolvedPath = require.resolve(specifier);
+    if (resolvedPath && fs.existsSync(resolvedPath)) {
+      const content = fs.readFileSync(resolvedPath, "utf8");
+      if (content.includes('"use client"') || content.includes("'use client'")) {
+        return true;
+      }
+      const hasClientFeatures = 
+        content.includes("useState") ||
+        content.includes("useEffect") ||
+        content.includes("useLayoutEffect") ||
+        content.includes("useContext") ||
+        content.includes("useReducer") ||
+        content.includes("useRef") ||
+        content.includes("addEventListener");
+      if (!hasClientFeatures) {
+        return true;
+      }
+    }
+  } catch {
+    return true;
   }
   return false;
 }
@@ -541,6 +629,7 @@ export function buildExecutionModel(
     hasFetch: analysis.fetchCalls.length > 0,
     cacheMode: null as string | null,
     revalidate: null as number | null,
+    hasUncachedFetch: false,
     conflicts: [] as string[]
   };
 
@@ -548,21 +637,16 @@ export function buildExecutionModel(
     const cacheModes = analysis.fetchCalls.map(f => f.cacheValue).filter(Boolean) as string[];
     const revalidateVals = analysis.fetchCalls.map(f => f.revalidateValue).filter((v) => v !== null && v !== undefined);
 
+    fetchStrategy.hasUncachedFetch = analysis.fetchCalls.some(f => !f.cacheValue && f.revalidateValue === null);
+
     if (cacheModes.length > 0) {
       fetchStrategy.cacheMode = cacheModes[0] ?? null;
     }
-    if (revalidateVals.length > 0) {
-      const firstVal = revalidateVals[0];
-      if (firstVal !== undefined) {
-        if (typeof firstVal === "number") {
-          fetchStrategy.revalidate = firstVal;
-        } else if (typeof firstVal === "string") {
-          const parsed = parseInt(firstVal, 10);
-          if (!isNaN(parsed)) {
-            fetchStrategy.revalidate = parsed;
-          }
-        }
-      }
+    
+    // Set revalidate to the minimum of all specified revalidate intervals (avoiding layout-mismatch false negatives)
+    const numericRevalidateVals = revalidateVals.map(v => typeof v === "number" ? v : parseInt(v, 10)).filter(v => !isNaN(v));
+    if (numericRevalidateVals.length > 0) {
+      fetchStrategy.revalidate = Math.min(...numericRevalidateVals);
     }
 
     analysis.fetchCalls.forEach((f) => {
@@ -619,10 +703,15 @@ export function buildExecutionModel(
     sourceFile.forEachDescendant((node) => {
       if (node.getKindName() === "JsxAttribute") {
         const name = (node as any).getNameNode().getText();
-        if (typeof name === "string" && name.startsWith("on")) {
-          hasEventHandlers = true;
-          if (!usesClientHooks.includes(name)) {
-            usesClientHooks.push(name);
+        if (typeof name === "string" && /^on[A-Z]/.test(name)) {
+          const lowerName = name.toLowerCase();
+          const EXCLUDED_ON_WORDS = ["ongoing", "online", "once", "only", "one", "onion", "onward"];
+          const isExcluded = EXCLUDED_ON_WORDS.some(word => lowerName === word || lowerName.startsWith(word));
+          if (!isExcluded) {
+            hasEventHandlers = true;
+            if (!usesClientHooks.includes(name)) {
+              usesClientHooks.push(name);
+            }
           }
         }
       }
@@ -642,6 +731,9 @@ export function buildExecutionModel(
         if (tagNameNode) {
           const tagName = tagNameNode.getText();
           if (tagName && tagName[0] === tagName[0].toUpperCase()) {
+            if (!isClientComponentBoundaryOffline(tagName, analysis.filePath, analysis.importDetails)) {
+              return;
+            }
             const attributes = (node as any).getAttributes();
             for (const attr of attributes) {
               if (attr.getKindName() === "JsxAttribute") {
@@ -684,7 +776,7 @@ export function buildExecutionModel(
               i.defaultImport === baseTagName ||
               i.namespaceImport === baseTagName
             );
-            if (imp && isThirdParty(imp.moduleSpecifier) && !isSafeForRSC(imp.moduleSpecifier)) {
+            if (imp && isThirdParty(imp.moduleSpecifier) && !isPackageSafeForRSC(imp.moduleSpecifier, analysis.filePath)) {
               hasThirdPartyComponent = true;
             }
           }

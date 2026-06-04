@@ -65,20 +65,32 @@ export const runtimeExecutionLimits: Rule = {
             fix: "Change export const runtime = 'edge' to 'nodejs' or remove native Node imports."
           });
         } else if (t.type === "PROCESS_ENV") {
-          diagnostics.push({
-            file: analysis.filePath,
-            severity: "warning", // Maps to HIGH with RU-001-HIGH profile
-            ruleId: this.id,
-            id: "RU-001-HIGH",
-            message: `HIGH: Restricted process.env API '${t.source}' is referenced in an Edge Runtime context.`,
-            whyItMatters,
-            quickFixes: ["Avoid accessing process.env dynamically at runtime; use build-time environment definitions or next.config.js env mapping."],
-            architectureSuggestions: ["Limit environment variable usage on Edge. Prefer passing configurations explicitly or using public prefixes where safe."],
-            optimizationGuidance,
-            productionRisks: ["Dynamic process.env checks can bypass caching, raise boot times, or result in undefined runtime values in some Edge providers."],
-            examples: constraint?.examples,
-            fix: "Use environment configurations or build-time definitions instead of dynamic process.env access."
-          });
+          let isWrite = false;
+          try {
+            const fileLines = readFileSync(analysis.filePath, "utf-8").split("\n");
+            const lineText = fileLines[t.line - 1] || "";
+            isWrite = /process\.env\.[a-zA-Z0-9_]+\s*=\s*/.test(lineText) || /process\.env\s*=\s*/.test(lineText);
+          } catch {
+            // ignore
+          }
+
+          if (isWrite) {
+            diagnostics.push({
+              file: analysis.filePath,
+              line: t.line,
+              severity: "warning", // Maps to HIGH with RU-001-HIGH profile
+              ruleId: this.id,
+              id: "RU-001-HIGH",
+              message: `HIGH: Restricted process.env write API '${t.source}' is referenced in an Edge Runtime context.`,
+              whyItMatters,
+              quickFixes: ["Avoid modifying process.env at runtime."],
+              architectureSuggestions: ["Limit environment variable usage on Edge. Prefer passing configurations explicitly or using public prefixes where safe."],
+              optimizationGuidance,
+              productionRisks: ["Dynamic process.env checks can bypass caching, raise boot times, or result in undefined runtime values in some Edge providers."],
+              examples: constraint?.examples,
+              fix: "Remove dynamic process.env writes as they are unsupported in Edge Runtime."
+            });
+          }
         }
       }
     }

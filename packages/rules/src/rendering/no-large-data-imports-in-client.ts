@@ -2,6 +2,46 @@ import { Rule, RuleContext, Diagnostic } from "../types.js";
 import fs from "node:fs";
 import path from "node:path";
 import { mapEventToDiagnostic } from "../knowledge/atomicConstraints.js";
+import { Project, SyntaxKind, Node } from "ts-morph";
+
+function isInsideDeferredScope(node: Node): boolean {
+  let parent = node.getParent();
+  while (parent) {
+    if (parent.isKind(SyntaxKind.CallExpression)) {
+      const callee = parent.getExpression().getText();
+      if (
+        callee === "useEffect" ||
+        callee === "useLayoutEffect" ||
+        callee === "useCallback" ||
+        callee === "useMemo" ||
+        callee.endsWith(".useEffect") ||
+        callee.endsWith(".useLayoutEffect") ||
+        callee.endsWith(".useCallback") ||
+        callee.endsWith(".useMemo")
+      ) {
+        return true;
+      }
+    }
+
+    if (
+      parent.isKind(SyntaxKind.FunctionDeclaration) ||
+      parent.isKind(SyntaxKind.FunctionExpression) ||
+      parent.isKind(SyntaxKind.ArrowFunction)
+    ) {
+      const outerFunction =
+        parent.getFirstAncestorByKind(SyntaxKind.FunctionDeclaration) ||
+        parent.getFirstAncestorByKind(SyntaxKind.ArrowFunction) ||
+        parent.getFirstAncestorByKind(SyntaxKind.FunctionExpression);
+
+      if (outerFunction) {
+        return true;
+      }
+    }
+
+    parent = parent.getParent();
+  }
+  return false;
+}
 
 export const noLargeDataImportsInClient: Rule = {
   id: "no-large-data-imports-in-client",
@@ -14,93 +54,28 @@ export const noLargeDataImportsInClient: Rule = {
   run(context: RuleContext): Diagnostic[] {
     const diagnostics: Diagnostic[] = [];
 
-    const stripUseEffect = (text: string): string => {
-      let result = text;
-      const pattern = /\buse(Layout)?Effect\s*\(/g;
-      let match;
-      while ((match = pattern.exec(result)) !== null) {
-        const startIdx = match.index;
-        const openParenIdx = result.indexOf("(", startIdx);
-        if (openParenIdx === -1) continue;
+    const isUsedAtRenderTime = (content: string, identifiers: string[]): boolean => {
+      try {
+        const project = new Project();
+        const sourceFile = project.createSourceFile("_temp_large_data.tsx", content);
+        let usedAtRenderTime = false;
 
-        let depth = 1;
-        let endIdx = -1;
-        for (let i = openParenIdx + 1; i < result.length; i++) {
-          if (result[i] === "(") {
-            depth++;
-          } else if (result[i] === ")") {
-            depth--;
-            if (depth === 0) {
-              endIdx = i;
-              break;
+        sourceFile.getDescendantsOfKind(SyntaxKind.Identifier).forEach((id) => {
+          const name = id.getText();
+          if (identifiers.includes(name)) {
+            const importParent = id.getFirstAncestorByKind(SyntaxKind.ImportDeclaration);
+            if (importParent) return;
+
+            if (!isInsideDeferredScope(id)) {
+              usedAtRenderTime = true;
             }
           }
-        }
+        });
 
-        if (endIdx !== -1) {
-          result = result.substring(0, startIdx) + result.substring(endIdx + 1);
-          pattern.lastIndex = 0;
-        }
+        return usedAtRenderTime;
+      } catch {
+        return true;
       }
-      return result;
-    };
-
-    const stripJSXEventHandlers = (text: string): string => {
-      let result = text;
-      const pattern = /\bon[A-Z][a-zA-Z]+\s*=\s*\{/g;
-      let match;
-      while ((match = pattern.exec(result)) !== null) {
-        const startIdx = match.index;
-        const openBraceIdx = result.indexOf("{", startIdx);
-        if (openBraceIdx === -1) continue;
-
-        let depth = 1;
-        let endIdx = -1;
-        for (let i = openBraceIdx + 1; i < result.length; i++) {
-          if (result[i] === "{") {
-            depth++;
-          } else if (result[i] === "}") {
-            depth--;
-            if (depth === 0) {
-              endIdx = i;
-              break;
-            }
-          }
-        }
-
-        if (endIdx !== -1) {
-          result = result.substring(0, startIdx) + result.substring(endIdx + 1);
-          pattern.lastIndex = 0;
-        }
-      }
-      return result;
-    };
-
-    const isUsedAtRenderTime = (content: string, importSpecifier: string, identifiers: string[]): boolean => {
-      // Remove comments
-      let cleaned = content.replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, "");
-
-      // Remove the import lines for this specifier to avoid matching import declarations
-      const lines = cleaned.split("\n");
-      const filteredLines = lines.filter(line => !line.includes(importSpecifier));
-      cleaned = filteredLines.join("\n");
-
-      // Remove useEffect / useLayoutEffect blocks using balanced parser
-      cleaned = stripUseEffect(cleaned);
-
-      // Remove JSX event handlers using balanced parser
-      cleaned = stripJSXEventHandlers(cleaned);
-
-      // Check if any identifier is used in the cleaned code
-      for (const id of identifiers) {
-        if (!id) continue;
-        const regex = new RegExp(`\\b${id}\\b`);
-        if (regex.test(cleaned)) {
-          return true;
-        }
-      }
-
-      return false;
     };
 
     for (const analysis of context.analyses) {
@@ -138,7 +113,7 @@ export const noLargeDataImportsInClient: Rule = {
               }
             }
           } catch {
-            // ignore FS errors
+            // ignore
           }
         }
 
@@ -146,7 +121,6 @@ export const noLargeDataImportsInClient: Rule = {
           try {
             const size = fs.statSync(targetFile).size;
             if (size > 51200) { // 50KB
-              // Collect identifiers imported
               const identifiers: string[] = [];
               if (imp.defaultImport) identifiers.push(imp.defaultImport);
               if (imp.namespaceImport) identifiers.push(imp.namespaceImport);
@@ -156,8 +130,7 @@ export const noLargeDataImportsInClient: Rule = {
                 }
               }
 
-              // Check if used at render time
-              if (isUsedAtRenderTime(content, imp.moduleSpecifier, identifiers)) {
+              if (isUsedAtRenderTime(content, identifiers)) {
                 const line = imp.line || 1;
                 diagnostics.push(
                   mapEventToDiagnostic(
@@ -172,7 +145,7 @@ export const noLargeDataImportsInClient: Rule = {
               }
             }
           } catch {
-            // ignore FS errors
+            // ignore
           }
         }
       }

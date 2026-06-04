@@ -1,35 +1,70 @@
 import { Rule, RuleContext, Diagnostic } from "../types.js";
 import { readFileSync } from "node:fs";
-import { Project, SyntaxKind } from "ts-morph";
+import { Project, SyntaxKind, Node } from "ts-morph";
 import { mapEventToDiagnostic } from "../knowledge/atomicConstraints.js";
 
-function hasMutatingSideEffects(bodyText: string): boolean {
-  const lowercaseText = bodyText.toLowerCase();
+function splitWords(name: string): string[] {
+  return name
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[_\-\.]/g, ' ')
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+}
 
-  if (
-    lowercaseText.includes("revalidatepath") ||
-    lowercaseText.includes("revalidatetag") ||
-    lowercaseText.includes("redirect(") ||
-    lowercaseText.includes("cookies(") ||
-    lowercaseText.includes("cookies.")
-  ) {
-    return true;
+function hasMutatingSideEffectsAST(actionNode: any): boolean {
+  const callExprs = actionNode.getDescendantsOfKind(SyntaxKind.CallExpression);
+  for (const call of callExprs) {
+    const expression = call.getExpression();
+    let name = "";
+    if (Node.isPropertyAccessExpression(expression)) {
+      name = expression.getName();
+    } else if (Node.isIdentifier(expression)) {
+      name = expression.getText();
+    }
+
+    if (name) {
+      const lowerName = name.toLowerCase();
+      if (
+        lowerName === "revalidatepath" ||
+        lowerName === "revalidatetag" ||
+        lowerName === "redirect"
+      ) {
+        return true;
+      }
+
+      const baseMutationKeywords = ["create", "update", "delete", "insert", "remove", "save", "patch", "upsert", "write", "execute", "replace"];
+      const words = splitWords(name);
+      if (baseMutationKeywords.some(kw => words.includes(kw))) {
+        return true;
+      }
+    }
   }
 
-  const mutationKeywords = [
-    ".update",
-    ".delete",
-    ".create",
-    ".upsert",
-    ".insert",
-    "update(",
-    "delete(",
-    "insert(",
-    "create(",
-    "upsert(",
-  ];
+  // Note: cookies().get() is read-only — we only want cookies().set() or
+  // cookies().delete() which are handled above in the PropertyAccessExpression
+  // branch. A bare "cookies" identifier is NOT sufficient to classify mutation.
 
-  return mutationKeywords.some((kw) => lowercaseText.includes(kw));
+  const strings = actionNode.getDescendantsOfKind(SyntaxKind.StringLiteral);
+  const templates = actionNode.getDescendantsOfKind(SyntaxKind.NoSubstitutionTemplateLiteral);
+  const templateHeads = actionNode.getDescendantsOfKind(SyntaxKind.TemplateHead);
+  const templateMiddle = actionNode.getDescendantsOfKind(SyntaxKind.TemplateMiddle);
+  const templateTails = actionNode.getDescendantsOfKind(SyntaxKind.TemplateTail);
+  
+  const textNodes = [...strings, ...templates, ...templateHeads, ...templateMiddle, ...templateTails];
+  const sqlMutationRegex = /\b(insert\s+into|update\s+|delete\s+from|drop\s+table|alter\s+table)\b/i;
+  
+  for (const node of textNodes) {
+    try {
+      if (sqlMutationRegex.test(node.getLiteralText())) {
+        return true;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return false;
 }
 
 export const serverActionsNoReads: Rule = {
@@ -162,13 +197,7 @@ export const serverActionsNoReads: Rule = {
         const isReadName = /^(get|read|fetch)([A-Z]|$)/.test(action.name);
         if (!isReadName) continue;
 
-        const body = (action.node as any).getBody
-          ? (action.node as any).getBody()
-          : null;
-        if (!body) continue;
-
-        const bodyText = body.getText();
-        if (!hasMutatingSideEffects(bodyText)) {
+        if (!hasMutatingSideEffectsAST(action.node)) {
           diagnostics.push(
             mapEventToDiagnostic(
               "CACHE_CONFLICT_DETECTED",

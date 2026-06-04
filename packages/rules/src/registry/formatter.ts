@@ -109,6 +109,22 @@ function getIssueCategory(ruleId: string, level: SeverityLevel, context?: { fetc
   return getRuleAuditMetadata(ruleId, level, context).category;
 }
 
+/**
+ * Returns true only when the file path contains a path segment that is the
+ * standalone word "action" or "actions", preventing false matches on
+ * `satisfaction.ts`, `transaction.ts`, etc.
+ */
+function isActionFilePath(filePath: string): boolean {
+  const ACTION_SEGMENT_RE = /\bactions?\b/i;
+  const normalized = filePath.replace(/\\/g, "/");
+  const segments = normalized.split("/");
+  for (const seg of segments) {
+    const bare = seg.replace(/\.[^.]+$/, "");
+    if (ACTION_SEGMENT_RE.test(bare)) return true;
+  }
+  return false;
+}
+
 function buildFileMeta(filePath: string): FileMeta {
   const nodes = getLastGraphNodes();
   const node = nodes?.get(filePath);
@@ -118,7 +134,7 @@ function buildFileMeta(filePath: string): FileMeta {
     kind,
     isClientComponent: node?.isClientComponent === true || kind === "client-component" || kind === "client-util",
     isServerComponent: node?.isServerComponent === true || kind === "server-component" || kind === "server-util",
-    isServerAction: kind === "server-action" || filePath.toLowerCase().includes("action"),
+    isServerAction: kind === "server-action" || isActionFilePath(filePath),
     filePath,
   };
 }

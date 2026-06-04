@@ -1,74 +1,35 @@
-import { readFileSync, readdirSync, existsSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-import { createRequire } from "node:module";
+import bundling from "../../../knowledge/concepts/bundling.json" with { type: "json" };
+import caching from "../../../knowledge/concepts/caching.json" with { type: "json" };
+import clientComponents from "../../../knowledge/concepts/client-components.json" with { type: "json" };
+import dataFetching from "../../../knowledge/concepts/data-fetching.json" with { type: "json" };
+import errorBoundaries from "../../../knowledge/concepts/error-boundaries.json" with { type: "json" };
+import hydration from "../../../knowledge/concepts/hydration.json" with { type: "json" };
+import metadata from "../../../knowledge/concepts/metadata.json" with { type: "json" };
+import middleware from "../../../knowledge/concepts/middleware.json" with { type: "json" };
+import observability from "../../../knowledge/concepts/observability.json" with { type: "json" };
+import performance from "../../../knowledge/concepts/performance.json" with { type: "json" };
+import rendering from "../../../knowledge/concepts/rendering.json" with { type: "json" };
+import revalidation from "../../../knowledge/concepts/revalidation.json" with { type: "json" };
+import routing from "../../../knowledge/concepts/routing.json" with { type: "json" };
+import runtime from "../../../knowledge/concepts/runtime.json" with { type: "json" };
+import security from "../../../knowledge/concepts/security.json" with { type: "json" };
+import serverActions from "../../../knowledge/concepts/server-actions.json" with { type: "json" };
+import serverComponents from "../../../knowledge/concepts/server-components.json" with { type: "json" };
+import streaming from "../../../knowledge/concepts/streaming.json" with { type: "json" };
+
 import {
   KnowledgeConceptSchema,
   type KnowledgeConcept,
-  type KnowledgeConstraint,
   type ConceptDefinition,
   type ConstraintDefinition,
 } from "./schema.js";
 
 // ---------------------------------------------------------------------------
-// Resolve the path to packages/knowledge/concepts at runtime.
-//
-// tsup compiles to both ESM and CJS. In ESM, import.meta.url is available.
-// In CJS, __dirname is available natively. We resolve which to use at runtime.
-// createRequire gives us a require() in ESM; we use its .resolve() to get
-// the absolute path of this module, then derive __dirname from it.
-// ---------------------------------------------------------------------------
-
-// Build a module-local require anchored to this file.
-// createRequire(import.meta.url) works in ESM; in the CJS build tsup injects
-// a __filename global so we use that as the fallback via globalThis.
-//
-// Note: tsup's CJS shim already defines __filename in the module scope.
-// We reference it via `(globalThis as any).__filename` only as a safety net
-// — the `import.meta.url` branch runs in the ESM output.
-//
-// To avoid the "import.meta is not available" warning from tsup we use
-
-// createRequire with an absolute path derived from process.env or a
-// direct __dirname reference for CJS, and import.meta.url only where
-// we KNOW we are in ESM (the check is done at module evaluation time).
-
-// For path resolution we only need the directory of the compiled file.
-// In CJS __dirname is a module global injected by Node. In ESM we derive
-// it from import.meta.url. tsup handles both via __dirname injection in CJS.
-/* eslint-disable @typescript-eslint/no-var-requires */
-const localDir =
-  typeof __dirname !== "undefined"
-    ? __dirname
-    : dirname(fileURLToPath(import.meta.url));
-
-// Walk up parent directories to locate packages/knowledge/concepts
-let conceptsDir = "";
-let current = localDir;
-for (let i = 0; i < 6; i++) {
-  const candidate = join(current, "packages", "knowledge", "concepts");
-  if (existsSync(candidate)) {
-    conceptsDir = candidate;
-    break;
-  }
-  const candidateDirect = join(current, "knowledge", "concepts");
-  if (existsSync(candidateDirect)) {
-    conceptsDir = candidateDirect;
-    break;
-  }
-  const parent = dirname(current);
-  if (parent === current) break;
-  current = parent;
-}
-
-const CONCEPTS_DIR = conceptsDir;
-
-// ---------------------------------------------------------------------------
 // KnowledgeRegistry
 //
-// Loads ALL knowledge packs eagerly at construction time (synchronously, once).
-// Rules query this registry during their run() to retrieve constraints and
-// patterns without any hardcoded semantics in the rule files themselves.
+// Eagerly bundles all knowledge concept JSON objects to make registry checks
+// completely filesystem-independent and robust in any environment (including
+// bundled VS Code extension, CLI, and web environments).
 // ---------------------------------------------------------------------------
 
 export class KnowledgeRegistry {
@@ -84,46 +45,48 @@ export class KnowledgeRegistry {
   }
 
   // -------------------------------------------------------------------------
-  // Private: load all JSON files from the concepts directory
+  // Private: load all JSON files statically from bundled inputs
   // -------------------------------------------------------------------------
 
   private loadAll(): void {
-    let files: string[];
+    const rawConcepts = [
+      bundling,
+      caching,
+      clientComponents,
+      dataFetching,
+      errorBoundaries,
+      hydration,
+      metadata,
+      middleware,
+      observability,
+      performance,
+      rendering,
+      revalidation,
+      routing,
+      runtime,
+      security,
+      serverActions,
+      serverComponents,
+      streaming,
+    ];
 
-    try {
-      files = readdirSync(CONCEPTS_DIR).filter((f) => f.endsWith(".json"));
-    } catch (err: any) {
-      console.error(
-        `[KnowledgeRegistry] Failed to read concepts directory at "${CONCEPTS_DIR}": ${err.message}`,
-      );
-      return;
-    }
+    for (const raw of rawConcepts) {
+      const result = KnowledgeConceptSchema.safeParse(raw);
 
-    for (const file of files) {
-      const filePath = join(CONCEPTS_DIR, file);
-      try {
-        const raw = JSON.parse(readFileSync(filePath, "utf-8"));
-        const result = KnowledgeConceptSchema.safeParse(raw);
-
-        if (!result.success) {
-          console.warn(
-            `[KnowledgeRegistry] Schema validation failed for "${file}":\n`,
-            result.error.format(),
-          );
-          continue;
-        }
-
-        const concept = result.data;
-        const slug = file.replace(".json", "");
-        this.concepts.set(concept.concept, concept);
-        this.conceptsByCategory.set(slug, concept);
-        // Map category fallback for backward compatibility
-        this.conceptsByCategory.set(concept.category, concept);
-      } catch (err: any) {
-        console.error(
-          `[KnowledgeRegistry] Failed to load "${file}": ${err.message}`,
+      if (!result.success) {
+        console.warn(
+          `[KnowledgeRegistry] Schema validation failed for embedded concept:\n`,
+          result.error.format(),
         );
+        continue;
       }
+
+      const concept = result.data;
+      const slug = concept.concept.toLowerCase().replace(/\s+/g, "-");
+      this.concepts.set(concept.concept, concept);
+      this.conceptsByCategory.set(slug, concept);
+      // Map category fallback for backward compatibility
+      this.conceptsByCategory.set(concept.category, concept);
     }
   }
 

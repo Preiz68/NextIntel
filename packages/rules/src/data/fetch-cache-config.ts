@@ -1,30 +1,88 @@
 import { Rule, RuleContext, Diagnostic } from "../types.js";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
-
-/**
- * Rule: fetch-cache-config
- *
- * Detection logic: unchanged deterministic AST check on fetchCalls metadata.
- * Semantics (cache recommendations, rendering implications, optimisation
- * guidance): sourced entirely from the "Caching" knowledge pack constraint
- * DYNAMIC_RENDER_TRIGGER-001.
- *
- * Improvement: Classifies fetch() usage into specific categories instead of
- * emitting the same vague "Implicit fetch caching detected" for every match.
- *
- * Classification:
- *   - Mutation fetch (POST/PUT/DELETE/PATCH in Server Action) → SKIP (should not be cached)
- *   - Route with dynamic triggers (cookies/headers) → suggest no-store explicitly
- *   - Page without dynamic triggers → suggest force-cache or revalidate
- *   - Utility/DAL file → suggest force-cache + React.cache() wrapper
- *
- * Deduplication: if multiple uncached fetches exist in the same file, collapse
- * to a single diagnostic with a count.
- */
+import { Project, SyntaxKind } from "ts-morph";
 
 const UTIL_FOLDERS = new Set(["server", "shared", "lib", "utils", "helpers", "data", "dal", "services"]);
 const ROUTING_BASENAMES = new Set(["page", "layout", "route", "template"]);
+
+function resolveImportPath(currentFilePath: string, moduleSpecifier: string): string | null {
+  if (!moduleSpecifier.startsWith(".")) return null;
+  const currentDir = path.dirname(currentFilePath);
+  const absoluteNoExt = path.resolve(currentDir, moduleSpecifier);
+  const extensions = [".tsx", ".ts", ".jsx", ".js"];
+  for (const ext of extensions) {
+    const p = absoluteNoExt + ext;
+    if (existsSync(p)) return p;
+    const indexP = path.resolve(absoluteNoExt, "index" + ext);
+    if (existsSync(indexP)) return indexP;
+  }
+  return null;
+}
+
+function isUtilityFile(analysis: any): boolean {
+  const isUtilKind =
+    analysis.semanticKind === "util" ||
+    analysis.semanticKind === "shared-util" ||
+    analysis.semanticKind === "server-util" ||
+    analysis.semanticKind === "mixed-runtime-util" ||
+    analysis.semanticKind === "unknown";
+  
+  const hasNoJsx = !analysis.filePath.endsWith(".tsx") && !analysis.filePath.endsWith(".jsx");
+  return isUtilKind || hasNoJsx;
+}
+
+function getExportedFetchHelpers(analysis: any): string[] {
+  const helpers: string[] = [];
+  let content = "";
+  try {
+    content = readFileSync(analysis.filePath, "utf-8");
+  } catch {
+    return [];
+  }
+
+  const project = new Project();
+  const sourceFile = project.createSourceFile("_temp_df001.ts", content);
+  
+  const functions = sourceFile.getDescendantsOfKind(SyntaxKind.FunctionDeclaration)
+    .filter(f => f.isExported());
+  const variables = sourceFile.getDescendantsOfKind(SyntaxKind.VariableDeclaration)
+    .filter(v => {
+      const varStatement = v.getFirstAncestorByKind(SyntaxKind.VariableStatement);
+      return varStatement ? varStatement.isExported() : false;
+    });
+
+  const checkBodyForUnoptimizedFetch = (bodyText: string): boolean => {
+    if (!bodyText.includes("fetch(")) return false;
+    return /fetch\(\s*[^,)]+\s*\)/.test(bodyText) ||
+           (/fetch\(\s*[^,)]+,\s*\{/.test(bodyText) && !bodyText.includes("cache:") && !bodyText.includes("revalidate:"));
+  };
+
+  for (const func of functions) {
+    const name = func.getName();
+    if (!name) continue;
+    
+    const bodyText = func.getBody()?.getText() ?? "";
+    if (checkBodyForUnoptimizedFetch(bodyText)) {
+      helpers.push(name);
+    }
+  }
+
+  for (const v of variables) {
+    const name = v.getName();
+    const initializer = v.getInitializer();
+    if (!initializer) continue;
+    
+    if (initializer.getKind() === SyntaxKind.ArrowFunction || initializer.getKind() === SyntaxKind.FunctionExpression) {
+      const bodyText = initializer.getText();
+      if (checkBodyForUnoptimizedFetch(bodyText)) {
+        helpers.push(name);
+      }
+    }
+  }
+
+  return helpers;
+}
 
 function fileContext(filePath: string): "server-action" | "routing-boundary" | "utility" | "other" {
   const fp = filePath.replace(/\\/g, "/");
@@ -41,7 +99,6 @@ function hasDynamicTrigger(content: string): boolean {
 }
 
 function isMutationFetch(content: string, fetchLine: number): boolean {
-  // Heuristic: look for HTTP mutation methods near the fetch call
   const lines = content.split("\n");
   const windowStart = Math.max(0, fetchLine - 3);
   const windowEnd = Math.min(lines.length, fetchLine + 5);
@@ -86,7 +143,6 @@ function buildMessage(
     );
   }
 
-  // HYBRID_ROUTE
   return (
     `${base}. Classified as a HYBRID_ROUTE due to mixed static and dynamic requirements. ` +
     `Consider splitting your data fetching layers (RSC vs. Client Components) or using React.cache() ` +
@@ -146,19 +202,20 @@ export const fetchCacheConfig: Rule = {
     const optimizationGuidance = constraint?.optimizationGuidance ?? [];
     const productionRisks = constraint?.productionRisks ?? [];
 
+    const helperMap = new Map<string, string[]>();
+    for (const analysis of context.analyses) {
+      if (analysis.executionModel.componentType === "client") continue;
+      if (isUtilityFile(analysis)) {
+        const helpers = getExportedFetchHelpers(analysis);
+        if (helpers.length > 0) {
+          helperMap.set(analysis.filePath, helpers);
+        }
+      }
+    }
+
     for (const analysis of context.analyses) {
       if (analysis.executionModel.componentType === "client") continue;
 
-      const { fetchStrategy } = analysis.executionModel;
-      if (
-        !fetchStrategy.hasFetch ||
-        fetchStrategy.cacheMode !== null ||
-        fetchStrategy.revalidate !== null
-      ) {
-        continue; // already configured or no fetch calls
-      }
-
-      // Read file content for context classification
       let content = "";
       try {
         content = readFileSync(analysis.filePath, "utf-8");
@@ -166,58 +223,133 @@ export const fetchCacheConfig: Rule = {
         // ignore
       }
 
-      // ── Skip Server Action mutation fetches ──────────────────────────────────
-      // POST/PUT/DELETE/PATCH in a "use server" file shouldn't be cached
-      if (isServerAction(content)) {
-        const fetchLine = analysis.fetchCalls[0]?.line ?? 1;
-        if (isMutationFetch(content, fetchLine)) continue;
+      const { fetchStrategy } = analysis.executionModel;
+      const hasUncached = fetchStrategy.hasFetch && fetchStrategy.hasUncachedFetch;
+
+      if (hasUncached) {
+        let skipDirect = false;
+        if (isServerAction(content)) {
+          const fetchLine = analysis.fetchCalls[0]?.line ?? 1;
+          if (isMutationFetch(content, fetchLine)) {
+            skipDirect = true;
+          }
+        }
+
+        if (!skipDirect) {
+          const ctx = fileContext(analysis.filePath);
+          const fetchCount = analysis.fetchCalls.length || 1;
+
+          const isDynamic = hasDynamicTrigger(content) || 
+                            analysis.rendering.mode === "dynamic" ||
+                            analysis.executionModel.architectureFlags.includes("dynamic-force-dynamic");
+                            
+          const hasStaticIntent = /export\s+const\s+revalidate\s*=\s*[1-9]\d*/.test(content) || 
+                                  analysis.rendering.mode === "isr" ||
+                                  analysis.rendering.mode === "ppr" ||
+                                  analysis.executionModel.architectureFlags.includes("has-static-params") ||
+                                  analysis.filePath.includes("[");
+
+          let mode: "STATIC_ROUTE" | "DYNAMIC_ROUTE" | "HYBRID_ROUTE" = "STATIC_ROUTE";
+          if (isDynamic && hasStaticIntent) {
+            mode = "HYBRID_ROUTE";
+          } else if (isDynamic) {
+            mode = "DYNAMIC_ROUTE";
+          } else {
+            mode = "STATIC_ROUTE";
+          }
+
+          const message = buildMessage(mode, ctx, fetchCount);
+          const quickFixes = buildQuickFixes(mode, ctx);
+
+          diagnostics.push({
+            file: analysis.filePath,
+            line: analysis.fetchCalls[0]?.line,
+            column: analysis.fetchCalls[0]?.column,
+            endColumn: analysis.fetchCalls[0]?.endColumn,
+            severity: constraint?.severity ?? "warning",
+            ruleId: this.id,
+            id: constraint?.id ?? "DF-001",
+            message,
+            fix: quickFixes[0],
+            whyItMatters,
+            quickFixes,
+            architectureSuggestions,
+            optimizationGuidance,
+            productionRisks,
+            examples: constraint?.examples,
+          });
+        }
       }
 
-      // ── Classify file context ─────────────────────────────────────────────
-      const ctx = fileContext(analysis.filePath);
-      const fetchCount = analysis.fetchCalls.length || 1;
+      if (!isUtilityFile(analysis) && analysis.importDetails && analysis.importDetails.length > 0) {
+        const importedHelpers = new Map<string, { helperName: string; sourceFile: string }>();
+        for (const imp of analysis.importDetails) {
+          const targetPath = resolveImportPath(analysis.filePath, imp.moduleSpecifier);
+          if (!targetPath) continue;
 
-      // ── Classify Route Render Mode ──────────────────────────────────────────
-      const isDynamic = hasDynamicTrigger(content) || 
-                        analysis.rendering.mode === "dynamic" ||
-                        analysis.executionModel.architectureFlags.includes("dynamic-force-dynamic");
-                        
-      const hasStaticIntent = /export\s+const\s+revalidate\s*=\s*[1-9]\d*/.test(content) || 
-                              analysis.rendering.mode === "isr" ||
-                              analysis.rendering.mode === "ppr" ||
-                              analysis.executionModel.architectureFlags.includes("has-static-params") ||
-                              analysis.filePath.includes("["); // dynamic route segment which might be static/ISR
+          let matchedPath = "";
+          for (const key of helperMap.keys()) {
+            if (path.normalize(key).replace(/\\/g, "/") === path.normalize(targetPath).replace(/\\/g, "/")) {
+              matchedPath = key;
+              break;
+            }
+          }
 
-      let mode: "STATIC_ROUTE" | "DYNAMIC_ROUTE" | "HYBRID_ROUTE" = "STATIC_ROUTE";
-      if (isDynamic && hasStaticIntent) {
-        mode = "HYBRID_ROUTE";
-      } else if (isDynamic) {
-        mode = "DYNAMIC_ROUTE";
-      } else {
-        mode = "STATIC_ROUTE";
+          if (matchedPath) {
+            const helpers = helperMap.get(matchedPath)!;
+            if (imp.defaultImport && helpers.includes("default")) {
+              importedHelpers.set(imp.defaultImport, { helperName: "default", sourceFile: matchedPath });
+            }
+            for (const named of imp.namedImports || []) {
+              if (helpers.includes(named)) {
+                importedHelpers.set(named, { helperName: named, sourceFile: matchedPath });
+              }
+            }
+          }
+        }
+
+        if (importedHelpers.size > 0 && content) {
+          try {
+            const project = new Project();
+            const sourceFile = project.createSourceFile("_temp_comp_helper_df001.tsx", content);
+            const callExpressions = sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression);
+            for (const call of callExpressions) {
+              const exprText = call.getExpression().getText();
+              if (importedHelpers.has(exprText)) {
+                const helperInfo = importedHelpers.get(exprText)!;
+                const line = call.getStartLineNumber();
+                const startLoc = sourceFile.getLineAndColumnAtPos(call.getStart());
+                const endLoc = sourceFile.getLineAndColumnAtPos(call.getEnd());
+                const column = startLoc.column - 1;
+                const endColumn = endLoc.column - 1;
+
+                const mode = "STATIC_ROUTE";
+                const quickFixes = buildQuickFixes(mode, "utility");
+
+                diagnostics.push({
+                  file: analysis.filePath,
+                  line,
+                  column,
+                  endColumn,
+                  severity: constraint?.severity ?? "warning",
+                  ruleId: this.id,
+                  id: constraint?.id ?? "DF-001",
+                  message: `Call to unoptimized fetch helper '${exprText}' (from '${path.basename(helperInfo.sourceFile)}') detected in a Server Component. ${constraint?.problem ?? ""}`,
+                  fix: quickFixes[0],
+                  whyItMatters,
+                  quickFixes,
+                  architectureSuggestions,
+                  optimizationGuidance,
+                  productionRisks,
+                  examples: constraint?.examples,
+                });
+              }
+            }
+          } catch {
+            // ignore
+          }
+        }
       }
-
-      const message = buildMessage(mode, ctx, fetchCount);
-      const quickFixes = buildQuickFixes(mode, ctx);
-
-      diagnostics.push({
-        file: analysis.filePath,
-        line: analysis.fetchCalls[0]?.line,
-        column: analysis.fetchCalls[0]?.column,
-        endColumn: analysis.fetchCalls[0]?.endColumn,
-        severity: constraint?.severity ?? "warning",
-        ruleId: this.id,
-        id: constraint?.id ?? "DF-001",
-
-        message,
-        fix: quickFixes[0],
-        whyItMatters,
-        quickFixes,
-        architectureSuggestions,
-        optimizationGuidance,
-        productionRisks,
-        examples: constraint?.examples,
-      });
     }
 
     return diagnostics;

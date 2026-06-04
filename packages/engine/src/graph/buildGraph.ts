@@ -139,14 +139,18 @@ export function buildGraph(
 
       if (resolvedAnalysis) {
         for (const name of importDetail.namedImports) {
-          const exp = resolvedAnalysis.exportDetails.find((e) => e.name === name);
+          const exp = resolvedAnalysis.exportDetails.find(
+            (e) => e.name === name,
+          );
           if (exp && exp.declaredInFile && exp.declaredInFile !== resolved) {
             targets.add(exp.declaredInFile);
           }
           targets.add(resolved);
         }
         if (importDetail.defaultImport) {
-          const exp = resolvedAnalysis.exportDetails.find((e) => e.name === "default");
+          const exp = resolvedAnalysis.exportDetails.find(
+            (e) => e.name === "default",
+          );
           if (exp && exp.declaredInFile && exp.declaredInFile !== resolved) {
             targets.add(exp.declaredInFile);
           }

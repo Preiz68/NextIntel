@@ -17,6 +17,79 @@ export interface SimulationResult {
   findings: SimulationFinding[];
 }
 
+function splitWords(name: string): string[] {
+  return name
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[_\-\.]/g, ' ')
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function isMutationAction(
+  actionNode: FunctionDeclaration | ArrowFunction | FunctionExpression
+): boolean {
+  const baseMutationKeywords = ["create", "update", "delete", "insert", "remove", "save", "patch", "upsert", "write", "execute", "replace"];
+
+  // 1. Check if the function name or variable assignment name contains mutation keywords as whole words
+  let actionName = "";
+  if (Node.isFunctionDeclaration(actionNode)) {
+    actionName = actionNode.getName() || "";
+  } else {
+    const varDec = actionNode.getFirstAncestorByKind(SyntaxKind.VariableDeclaration);
+    if (varDec) {
+      actionName = varDec.getName();
+    }
+  }
+  if (actionName) {
+    const words = splitWords(actionName);
+    if (baseMutationKeywords.some(kw => words.includes(kw))) {
+      return true;
+    }
+  }
+
+  // 2. Check all method/function calls in the action body
+  const callExprs = actionNode.getDescendantsOfKind(SyntaxKind.CallExpression);
+  for (const call of callExprs) {
+    const expression = call.getExpression();
+    let name = "";
+    if (Node.isPropertyAccessExpression(expression)) {
+      name = expression.getName();
+    } else if (Node.isIdentifier(expression)) {
+      name = expression.getText();
+    }
+    
+    if (name) {
+      const words = splitWords(name);
+      if (baseMutationKeywords.some(kw => words.includes(kw))) {
+        return true;
+      }
+    }
+  }
+
+  // 3. Check for SQL/raw queries in string or template literals
+  const strings = actionNode.getDescendantsOfKind(SyntaxKind.StringLiteral);
+  const templates = actionNode.getDescendantsOfKind(SyntaxKind.NoSubstitutionTemplateLiteral);
+  const templateHeads = actionNode.getDescendantsOfKind(SyntaxKind.TemplateHead);
+  const templateSpans = actionNode.getDescendantsOfKind(SyntaxKind.TemplateMiddle);
+  const templateTails = actionNode.getDescendantsOfKind(SyntaxKind.TemplateTail);
+  
+  const textNodes = [...strings, ...templates, ...templateHeads, ...templateSpans, ...templateTails];
+  const sqlMutationRegex = /\b(insert\s+into|update\s+|delete\s+from|drop\s+table|alter\s+table)\b/i;
+  
+  for (const node of textNodes) {
+    try {
+      if (sqlMutationRegex.test(node.getLiteralText())) {
+        return true;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return false;
+}
+
 /**
  * Check if a Server Action body performs authentication and schema validation.
  */
@@ -28,14 +101,31 @@ function analyzeServerAction(
   const body = actionNode.getBody();
   if (!body) return [];
 
+  const params = actionNode.getParameters();
+  const paramNames = params.map((p) => p.getName()).filter(Boolean);
+
+  let hasAuth = false;
+  let hasValidation = params.length === 0;
+  let authLine = -1;
+  let validationLine = -1;
+
+  if (!hasValidation && paramNames.length > 0) {
+    const hasTypeGuard = actionNode.getDescendantsOfKind(SyntaxKind.IfStatement).some(ifStmt => {
+      const condText = ifStmt.getExpression().getText();
+      return paramNames.some(name => {
+        const regex = new RegExp(`\\b${name}\\b`);
+        if (!regex.test(condText)) return false;
+        return condText.includes("typeof") || condText.includes("===") || condText.includes("!==") || condText.includes("==") || condText.includes("!=") || condText.startsWith("!");
+      });
+    });
+    if (hasTypeGuard) {
+      hasValidation = true;
+    }
+  }
+
   const statements = body.isKind(SyntaxKind.Block) 
     ? body.asKindOrThrow(SyntaxKind.Block).getStatements()
     : [body];
-
-  let hasAuth = false;
-  let hasValidation = false;
-  let authLine = -1;
-  let validationLine = -1;
 
   // Let's inspect the statements to find calls related to auth and validation
   statements.forEach((stmt, index) => {
@@ -76,7 +166,8 @@ function analyzeServerAction(
   const column = startLoc.column - 1;
   const endColumn = endLoc.column - 1;
 
-  if (!hasAuth) {
+  // Only require authentication for Server Actions that perform mutations
+  if (!hasAuth && isMutationAction(actionNode)) {
     findings.push({
       type: "action_missing_auth",
       severity: "CRITICAL",
@@ -112,12 +203,11 @@ export class ExecutionSimulator {
       if (a.runtimeType === "SERVER_COMPONENT") {
         // Find browser globals accessed directly
         a.browserAPIs.forEach((api) => {
+          if (api.isGuarded) return; // Exempt guarded ones from Server Component leaks!
           findings.push({
             type: "ssr_leak",
-            severity: api.isGuarded ? "LOW" : "CRITICAL",
-            message: api.isGuarded
-              ? `Browser global '${api.api}' is referenced in Server Component inside a runtime guard. It is conditionally executed but not safe under static analysis.`
-              : `Browser global '${api.api}' is evaluated during server-side RSC render pass, causing runtime ReferenceError.`,
+            severity: "CRITICAL",
+            message: `Browser global '${api.api}' is evaluated during server-side RSC render pass, causing runtime ReferenceError.`,
             line: api.line,
             column: api.column,
             endColumn: api.endColumn,
@@ -183,7 +273,7 @@ export class ExecutionSimulator {
     // Let's find functions containing "use server" at the top of their body,
     // or if the whole file has "use server" at the top, inspect all exported functions.
     const hasFileDirective = sourceFile.getStatements().some((s) => {
-      const txt = s.getText().trim();
+      const txt = s.getText().trim().replace(/;$/, "");
       return txt === '"use server"' || txt === "'use server'";
     });
 

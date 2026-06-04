@@ -3,6 +3,63 @@ import { readFileSync } from "node:fs";
 import { Project, SyntaxKind } from "ts-morph";
 import { mapEventToDiagnostic } from "../knowledge/atomicConstraints.js";
 import { NEXT_FRAMEWORK_CONTRACTS } from "../registry/framework-contracts.js";
+import path from "node:path";
+
+export function isClientComponentBoundary(tagName: string, analysis: any, analyses: any[]): boolean {
+  const imports = analysis.importDetails || [];
+  let baseTagName = tagName;
+  if (tagName.includes(".")) {
+    baseTagName = tagName.split(".")[0];
+  }
+
+  const imp = imports.find((i: any) => 
+    i.defaultImport === baseTagName ||
+    i.namedImports.includes(baseTagName) ||
+    i.namespaceImport === baseTagName
+  );
+
+  if (!imp) {
+    // If not imported, it's defined locally in this Server Component file,
+    // which means it is a Server Component, not a Client Component boundary.
+    return false;
+  }
+
+  const specifier = imp.moduleSpecifier;
+  if (specifier.startsWith(".") || specifier.startsWith("/") || specifier.startsWith("@/")) {
+    const currentDir = path.dirname(analysis.filePath);
+    let resolvedPath = "";
+    if (specifier.startsWith("@/")) {
+      const suffix = specifier.slice(2);
+      const match = analyses.find(a => 
+        a.filePath.endsWith(suffix) || 
+        a.filePath.endsWith(suffix + ".tsx") || 
+        a.filePath.endsWith(suffix + ".ts") || 
+        a.filePath.endsWith(suffix + ".jsx") || 
+        a.filePath.endsWith(suffix + ".js")
+      );
+      if (match) {
+        return match.isClientComponent || match.semanticKind === "client-component";
+      }
+    } else {
+      const absolutePath = path.resolve(currentDir, specifier);
+      const match = analyses.find(a => {
+        const aNormalized = a.filePath.replace(/\\/g, "/");
+        const absNormalized = absolutePath.replace(/\\/g, "/");
+        return aNormalized.replace(/\.[jt]sx?$/, "") === absNormalized.replace(/\.[jt]sx?$/, "");
+      });
+      if (match) {
+        return match.isClientComponent || match.semanticKind === "client-component";
+      }
+    }
+  } else {
+    // Third-party packages are client boundaries unless explicitly marked as safe for RSC
+    const SAFE_RSC_PACKAGES = ["lucide-react", "heroicons", "react-icons", "clsx", "cva", "tailwind-merge"];
+    const isSafe = SAFE_RSC_PACKAGES.some(pkg => specifier === pkg || specifier.startsWith(pkg + "/"));
+    return !isSafe;
+  }
+
+  return false;
+}
 
 export function isTypeNonSerializable(type: any, visited: Set<any> = new Set(), isServerAction: boolean = false): boolean {
   if (!type) return false;
@@ -10,6 +67,25 @@ export function isTypeNonSerializable(type: any, visited: Set<any> = new Set(), 
   visited.add(type);
 
   const typeText = type.getText();
+
+  // Exclude React elements and ReactNode from non-serializable checks
+  if (
+    typeText === "JSX.Element" ||
+    typeText === "React.JSX.Element" ||
+    typeText === "ReactElement" ||
+    typeText.startsWith("ReactElement<") ||
+    typeText === "React.ReactElement" ||
+    typeText.startsWith("React.ReactElement<") ||
+    typeText === "ReactNode" ||
+    typeText === "React.ReactNode" ||
+    typeText.startsWith("React.ReactNode<") ||
+    typeText === "ReactPortal" ||
+    typeText === "React.ReactPortal" ||
+    typeText === "ReactFragment" ||
+    typeText === "React.ReactFragment"
+  ) {
+    return false;
+  }
 
   // If this is a Server Action parameter/return check, apply the framework contract validations
   if (isServerAction) {
@@ -83,6 +159,9 @@ export function isTypeNonSerializable(type: any, visited: Set<any> = new Set(), 
 function isNonSerializable(expr: any): boolean {
   if (!expr) return false;
   const kind = expr.getKindName();
+  if (kind === "JsxElement" || kind === "JsxSelfClosingElement" || kind === "JsxFragment") {
+    return false;
+  }
   if (
     kind === "ArrowFunction" ||
     kind === "FunctionExpression" ||
@@ -180,6 +259,9 @@ export const propsMustBeSerializable: Rule = {
             const tagName = tagNameNode.getText();
             // Check if tag name is capitalized (indicates a custom component, not raw HTML element)
             if (tagName && tagName[0] === tagName[0].toUpperCase()) {
+              if (!isClientComponentBoundary(tagName, analysis, context.analyses)) {
+                return;
+              }
               const attributes = (node as any).getAttributes();
               for (const attr of attributes) {
                 if (attr.getKindName() === "JsxAttribute") {
