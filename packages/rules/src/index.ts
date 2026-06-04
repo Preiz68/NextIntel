@@ -5,6 +5,7 @@ export * from "./registry/engine.js";
 // Knowledge registry — exported so the VS Code extension and other consumers
 // can query the registry independently of running the rule engine.
 export { KnowledgeRegistry } from "./knowledge/registry.js";
+export { resolveExamplesForConstraint } from "./knowledge/atomicConstraints.js";
 export type {
   KnowledgeConcept,
   KnowledgeConstraint,

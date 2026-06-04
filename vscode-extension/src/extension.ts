@@ -465,8 +465,9 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.workspace.onDidCloseTextDocument((doc) => {
       const key = doc.uri.toString();
-      documentDiagnostics.delete(key);
-      diagnostics.delete(doc.uri);
+      // Keep diagnostics in memory so they persist even when the file is closed!
+      // documentDiagnostics.delete(key);
+      // diagnostics.delete(doc.uri);
       const timer = debounceTimers.get(key);
       if (timer) clearTimeout(timer);
       const token = cancelTokens.get(key);

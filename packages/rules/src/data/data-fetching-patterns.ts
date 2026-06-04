@@ -2,9 +2,8 @@ import { Rule, RuleContext, Diagnostic } from "../types.js";
 import { readFileSync, existsSync } from "node:fs";
 import { Project, SyntaxKind, Node } from "ts-morph";
 import { mapEventToDiagnostic } from "../knowledge/atomicConstraints.js";
+import { isWaterfallCandidate } from "../utils/waterfall.js";
 import path from "node:path";
-
-
 /**
  * Rule: data-fetching-patterns
  *
@@ -121,6 +120,13 @@ function expressionReferencesVariables(awaitExpr: Node, variables: Set<string>):
   const identifiers = expression.getDescendantsOfKind(SyntaxKind.Identifier);
   for (const id of identifiers) {
     if (variables.has(id.getText())) {
+      const parent = id.getParent();
+      if (parent && parent.getKind() === SyntaxKind.PropertyAccessExpression) {
+        const propAccess = parent.asKind(SyntaxKind.PropertyAccessExpression);
+        if (propAccess && propAccess.getNameNode() === id) {
+          continue;
+        }
+      }
       return true;
     }
   }
@@ -630,11 +636,7 @@ export const dataFetchingPatterns: Rule = {
           // ── DF-005: Sequential awaits → waterfall ────────────────────────────
           const allAwaits = func.getDescendantsOfKind(SyntaxKind.AwaitExpression);
           const awaits = allAwaits.filter(aw => {
-            if (!isDirectAwaitInFunction(aw, func)) return false;
-            const expression = aw.getExpression();
-            if (!expression || expression.getKind() !== SyntaxKind.CallExpression) return false;
-            const callText = (expression as any).getExpression().getText();
-            return callText !== "Promise.all" && callText !== "Promise.allSettled" && callText !== "Promise.race";
+            return isDirectAwaitInFunction(aw, func) && isWaterfallCandidate(aw);
           });
 
           if (awaits.length >= 2) {
@@ -680,14 +682,7 @@ export const dataFetchingPatterns: Rule = {
               const latencyLossText =
                 `${severityLabel} request waterfall detected (${latencySaved}ms latency penalty). ` +
                 `Multiple sequential awaits (lines ${sequentialLines.join(", ")}) for fetch or database calls ` +
-                `in a Server Component body. Run these in parallel with Promise.all().
-
-Estimated latency loss:
-${items.map(item => `${item.latency}ms`).join(" + ")} = ${sequentialSum}ms
-
-Promise.all():
-max(${items.map(item => `${item.latency}ms`).join(", ")}) = ${parallelMax}ms
-Saved: ${latencySaved}ms`;
+                `in a Server Component body. Run these in parallel with Promise.all().`;
 
               const df005Diag = mapEventToDiagnostic(
                 "SEQUENTIAL_FETCH_WATERFALL",

@@ -18,39 +18,32 @@ export const serverOnlyBoundary: Rule = {
     const whyItMatters = constraint?.whyItMatters ?? "Accidentally importing backend-only code or database initialization files into Client Components leaks credentials, increases bundle sizes, and throws build compile errors. Explicitly importing 'server-only' protects this boundary.";
     const quickFixes = constraint?.quickFixes ?? ["Add import 'server-only'; at the top of the backend utility file."];
 
-    const DB_PACKAGES = [
+    const SERVER_ONLY_PACKAGES = [
+      "firebase-admin",
       "@prisma/client",
-      "drizzle-orm",
       "mongodb",
+      "drizzle-orm",
+      "@supabase/ssr",
       "pg",
       "pg-pool",
-      "knex",
       "mysql2",
       "sqlite3",
-      "mongoose",
       "redis",
       "ioredis",
       "mariadb",
+      "knex",
+      "mongoose"
     ];
 
     const SECRET_KEYWORDS = [
-      "new PrismaClient",
-      "mongoose.connect",
-      "new MongoClient",
-      "new Pool(",
-      "new Redis(",
-      "drizzle(",
-      "drizzleClient",
-      "process.env.DATABASE_URL",
-      "process.env.DB_PASS",
-      "process.env.DB_PASSWORD",
-      "process.env.STRIPE_SECRET_KEY",
-      "process.env.JWT_SECRET",
-      "process.env.API_SECRET",
-      "process.env.AWS_SECRET_ACCESS_KEY",
-      "process.env.CLERK_SECRET_KEY",
-      "process.env.FIREBASE_SERVICE_ACCOUNT",
+      "FIREBASE_PRIVATE_KEY",
+      "FIREBASE_CLIENT_EMAIL",
+      "DATABASE_URL",
     ];
+
+    const NODE_BUILTINS = new Set([
+      "fs", "path", "crypto", "net", "tls", "child_process", "os", "dns", "http", "https", "zlib", "stream", "readline", "process", "events"
+    ]);
 
     const ROUTING_KINDS = [
       "page",
@@ -96,24 +89,102 @@ export const serverOnlyBoundary: Rule = {
       if (!content) continue;
 
       // Skip files that already import server-only
-      const hasServerOnlyImport = 
+      const hasServerOnlyImport =
         (analysis.importDetails && analysis.importDetails.some(imp => imp.moduleSpecifier === "server-only")) ||
         /import\s+['"]server-only['"]/.test(content);
 
       if (hasServerOnlyImport) continue;
 
-      // Determine if this file is a database or config/utility module
-      const importsDbPackage = analysis.importDetails && analysis.importDetails.some(imp => 
-        DB_PACKAGES.includes(imp.moduleSpecifier) || 
-        DB_PACKAGES.some(pkg => imp.moduleSpecifier.startsWith(pkg + "/"))
+      // --- 1. SERVER-ONLY DEPENDENCIES ---
+      const hasServerOnlyDependency = analysis.importDetails && analysis.importDetails.some(imp => 
+        SERVER_ONLY_PACKAGES.includes(imp.moduleSpecifier) || 
+        SERVER_ONLY_PACKAGES.some(pkg => imp.moduleSpecifier.startsWith(pkg + "/"))
       );
 
-      const hasSecretOrDbKeyword = SECRET_KEYWORDS.some(kw => content.includes(kw)) ||
-        /\bconst\s+(db|prisma|drizzleClient|database|knex|pgPool)\b\s*=/.test(content);
+      // --- 2. SECRET OR PRIVATE ENV USAGE ---
+      let hasPrivateEnvUsage = false;
+      const dotEnvRegex = /\bprocess\.env\.([a-zA-Z0-9_]+)\b/g;
+      let match;
+      while ((match = dotEnvRegex.exec(content)) !== null) {
+        const varName = match[1];
+        if (varName && !varName.startsWith("NEXT_PUBLIC_")) {
+          hasPrivateEnvUsage = true;
+          break;
+        }
+      }
+      if (!hasPrivateEnvUsage) {
+        const bracketEnvRegex = /\bprocess\.env\s*\[\s*['"]([a-zA-Z0-9_]+)['"]\s*\]/g;
+        while ((match = bracketEnvRegex.exec(content)) !== null) {
+          const varName = match[1];
+          if (varName && !varName.startsWith("NEXT_PUBLIC_")) {
+            hasPrivateEnvUsage = true;
+            break;
+          }
+        }
+      }
 
-      const isDbOrSecretConfig = importsDbPackage || hasSecretOrDbKeyword;
+      const hasSecretKeyword = SECRET_KEYWORDS.some(kw => content.includes(kw));
 
-      if (isDbOrSecretConfig) {
+      // --- 3. NODE-ONLY APIS ---
+      const importsNodeApi = analysis.importDetails && analysis.importDetails.some(imp => {
+        const spec = imp.moduleSpecifier;
+        const cleanSpec = spec.startsWith("node:") ? spec.slice(5) : spec;
+        return NODE_BUILTINS.has(cleanSpec);
+      });
+      const hasRequireNodeApi = /require\(['"](node:)?(fs|path|crypto|net|tls|child_process|os|dns|http|https|zlib|stream|readline|process|events)['"]\)/.test(content);
+      const hasNodeApi = importsNodeApi || hasRequireNodeApi;
+
+      // --- 4. SERVER CONTEXT INDICATORS ---
+      const predecessors = (context.graph as any)?.predecessors(analysis.filePath) ?? [];
+      let importedOnlyByServer = false;
+      if (predecessors.length > 0) {
+        let hasClientImporter = false;
+        for (const pred of predecessors) {
+          const node = context.nodes.get(pred);
+          if (node) {
+            const isClient = node.isClientComponent || 
+                             node.semanticKind === "client-component" || 
+                             node.semanticKind === "client-util" ||
+                             (node.kind === "component" && node.isClientComponent);
+            if (isClient) {
+              hasClientImporter = true;
+              break;
+            }
+          }
+        }
+        if (!hasClientImporter) {
+          importedOnlyByServer = true;
+        }
+      }
+
+      // --- STRICT NEGATIVE RULE ---
+      const usesFirebaseClient = analysis.importDetails && analysis.importDetails.some(imp => {
+        const spec = imp.moduleSpecifier;
+        return spec === "firebase/app" || spec === "firebase/firestore" || spec === "firebase/storage" ||
+               spec.startsWith("firebase/app/") || spec.startsWith("firebase/firestore/") || spec.startsWith("firebase/storage/");
+      });
+
+      const hasFirebaseAdmin = analysis.importDetails && analysis.importDetails.some(imp => 
+        imp.moduleSpecifier === "firebase-admin" || imp.moduleSpecifier.startsWith("firebase-admin/")
+      );
+
+      const satisfiesNegativeRule = 
+        usesFirebaseClient &&
+        !hasPrivateEnvUsage &&
+        !hasFirebaseAdmin &&
+        !hasNodeApi &&
+        !hasSecretKeyword;
+
+      // Final Candidate Decision
+      const isServerOnlyCandidate = (
+        hasServerOnlyDependency ||
+        hasPrivateEnvUsage ||
+        hasSecretKeyword ||
+        hasNodeApi ||
+        importedOnlyByServer
+      ) && !satisfiesNegativeRule;
+
+      if (isServerOnlyCandidate) {
         const diag = mapEventToDiagnostic(
           "SERVER_ONLY_IMPORT_MISSING",
           "SC-SECURITY-002",

@@ -13,6 +13,7 @@ import path from "node:path";
 import { buildSemanticIR } from "./semantic-ir.js";
 import { calculateSeverityScore, toDiagnosticSeverity, applyContextualScoreOverride, toSeverityLevel } from "./scoring.js";
 import { resolveBoundary } from "./boundary-resolver.js";
+import { resolveExamplesForConstraint } from "../knowledge/atomicConstraints.js";
 
 // Export new modules so consumers can use them
 export { buildSemanticIR } from "./semantic-ir.js";
@@ -176,8 +177,23 @@ export class RuleEngine {
         finalScore = applyContextualScoreOverride(constraintId, finalScore, { layoutDepth });
       }
 
-      // Override default static severity with the calculated hard-gated diagnostic severity
-      d.severity = toDiagnosticSeverity(toSeverityLevel(finalScore));
+      // Override default static severity with the calculated hard-gated diagnostic severity.
+      // IMPORTANT: Respect the rule's original severity intent when it deliberately emits "info".
+      // Hard-gated scores must not silently upgrade an "info" advisory to a "warning" — only
+      // downgrade or keep equal. This prevents best-practice hints from masquerading as warnings.
+      const computedSeverity = toDiagnosticSeverity(toSeverityLevel(finalScore));
+      const ruleEmittedInfo = d.severity === "info";
+      const computedIsHigher = computedSeverity === "warning" || computedSeverity === "error";
+      if (ruleEmittedInfo && computedIsHigher) {
+        // Preserve the rule's info intent — do NOT promote it.
+        // d.severity stays "info".
+      } else {
+        d.severity = computedSeverity;
+      }
+
+      if (!d.examples) {
+        d.examples = resolveExamplesForConstraint(d.id || d.ruleId);
+      }
     }
 
     return collapsed;

@@ -36,28 +36,6 @@ export function detectHydration(analysis: FileAnalysis): HydrationSemantics {
         const insideEventHandler = /onClick|onChange|onSubmit|onKeyDown|onKeyUp|onFocus|onBlur/.test(lineText);
         const isDeferred = insideSafeHook || insideEventHandler;
 
-        if (lineText.includes("Math.random(")) {
-          nonDeterministic.push({
-            line: lineNum,
-            expression: "Math.random()",
-            isSafelyDeferred: isDeferred,
-          });
-          if (!isDeferred) {
-            hydrationRisks.push(`Line ${lineNum}: Unsafe access to 'Math.random()' during render phase.`);
-          }
-        }
-
-        if (lineText.includes("Date.now(") || lineText.includes("new Date(")) {
-          nonDeterministic.push({
-            line: lineNum,
-            expression: lineText.includes("Date.now(") ? "Date.now()" : "new Date()",
-            isSafelyDeferred: isDeferred,
-          });
-          if (!isDeferred) {
-            hydrationRisks.push(`Line ${lineNum}: Unsafe access to non-deterministic date constructor during render phase.`);
-          }
-        }
-
         const hasBrowserGlobal = /\b(window|document|localStorage|sessionStorage|navigator)\b/.test(lineText);
         if (hasBrowserGlobal) {
           const isGuarded = lineText.includes("typeof window") || lineText.includes("typeof document") || isDeferred;
@@ -71,6 +49,20 @@ export function detectHydration(analysis: FileAnalysis): HydrationSemantics {
           }
         }
       });
+
+      // Populate non-deterministic expressions strictly from AST findings
+      if (analysis.simulationFindings) {
+        analysis.simulationFindings.forEach((finding) => {
+          if (finding.type === "hydration_nondeterminism") {
+            nonDeterministic.push({
+              line: finding.line,
+              expression: finding.symbol,
+              isSafelyDeferred: false,
+            });
+            hydrationRisks.push(`Line ${finding.line}: Unsafe access to non-deterministic date constructor during render phase.`);
+          }
+        });
+      }
     } catch (e) {
       // ignore
     }

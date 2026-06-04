@@ -1,4 +1,5 @@
 import { Diagnostic as RuleDiagnostic } from "rules";
+import { parseExample } from "./exampleParser";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -47,6 +48,37 @@ function codeBlock(code: string, label: string, variant: "bad" | "good"): string
       <div class="code-label"><span class="code-label-icon">${icon}</span>${label}</div>
       <pre><code>${esc(code)}</code></pre>
     </div>`;
+}
+
+function exampleBlock(code: string, label: string, variant: "bad" | "good"): string {
+  const parsed = parseExample(code);
+  const icon = variant === "bad" ? "✕" : "✓";
+  const cls = variant === "bad" ? "code-bad" : "code-good";
+  
+  let html = `
+    <div class="example-group ${cls}">
+      <div class="example-header"><span class="example-header-icon">${icon}</span>${label}</div>`;
+  
+  if (parsed.description) {
+    html += `
+      <div class="example-description">${esc(parsed.description)}</div>`;
+  }
+  
+  for (const file of parsed.files) {
+    html += `
+      <div class="code-example-item">`;
+    if (file.filename) {
+      html += `
+        <div class="code-filename">📄 ${esc(file.filename)}</div>`;
+    }
+    html += `
+        <pre><code>${esc(file.code)}</code></pre>
+      </div>`;
+  }
+  
+  html += `
+    </div>`;
+  return html;
 }
 
 // ─── Card builder ─────────────────────────────────────────────────────────────
@@ -153,13 +185,13 @@ function buildDiagCard(d: RuleDiagnostic, idx: number): string {
     const invalidBlocks = (d.examples.invalid || [])
       .map((code, idx) => {
         const label = d.examples!.invalid!.length > 1 ? `Avoid (Example ${idx + 1})` : "Avoid";
-        return codeBlock(code, label, "bad");
+        return exampleBlock(code, label, "bad");
       })
       .join("");
     const validBlocks = (d.examples.valid || [])
       .map((code, idx) => {
         const label = d.examples!.valid!.length > 1 ? `Prefer (Example ${idx + 1})` : "Prefer";
-        return codeBlock(code, label, "good");
+        return exampleBlock(code, label, "good");
       })
       .join("");
     const examplesHtml = invalidBlocks + validBlocks;
@@ -524,6 +556,64 @@ export function buildPanelHtml(
 
     .code-bad .code-label  { background: var(--red-dim); color: var(--red); }
     .code-good .code-label { background: var(--green-dim); color: var(--green); }
+
+    /* ── Structured Examples ─────────────────────────────── */
+    .example-group {
+      margin: 14px 0;
+      border-radius: 6px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      background: rgba(0, 0, 0, 0.1);
+    }
+
+    .example-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+    
+    .example-header-icon {
+      font-size: 12px;
+      margin-right: 2px;
+    }
+
+    .example-group.code-bad { border-color: rgba(248,81,73,0.3); }
+    .example-group.code-bad .example-header { background: var(--red-dim); color: var(--red); }
+    
+    .example-group.code-good { border-color: rgba(63,185,80,0.3); }
+    .example-group.code-good .example-header { background: var(--green-dim); color: var(--green); }
+
+    .example-description {
+      padding: 10px 12px;
+      font-size: 12px;
+      color: var(--text-muted);
+      font-style: italic;
+      border-bottom: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.02);
+      line-height: 1.5;
+    }
+
+    .code-example-item {
+      border-bottom: 1px solid var(--border);
+    }
+
+    .code-example-item:last-child {
+      border-bottom: none;
+    }
+
+    .code-filename {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      background: rgba(255, 255, 255, 0.04);
+      padding: 4px 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    }
 
     pre {
       padding: 10px 12px;

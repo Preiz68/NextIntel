@@ -27,13 +27,31 @@ export type SemanticEvent =
   | "STALE_CACHE_TAG"
   | "BROAD_CACHE_INVALIDATION"
   | "INTERCEPTING_ROUTE_MISCONFIGURATION"
-  | "MISSING_SUSPENSE_BOUNDARY";
+  | "MISSING_SUSPENSE_BOUNDARY"
+  | "LAYOUT_BLOCKING_STREAMING"
+  | "DYN_REVAL_PATH_MISMATCH"
+  | "USE_CACHE_DIRECTIVE_SUGGESTION"
+  | "OPTIMIZE_PACKAGE_IMPORTS_MISSING"
+  | "SERVER_ONLY_IMPORT_MISSING"
+  | "CLIENT_GRAPH_LEAK";
 
 export interface AtomicConstraint {
   id: string;
   semanticEvent: SemanticEvent;
   phase: "render" | "effect" | "event" | "server" | "action";
-  concept: "server-components" | "client-components" | "server-actions" | "caching" | "data-fetching" | "routing" | "streaming";
+  concept:
+    | "server-components"
+    | "client-components"
+    | "server-actions"
+    | "caching"
+    | "data-fetching"
+    | "routing"
+    | "streaming"
+    | "revalidation"
+    | "rendering"
+    | "performance"
+    | "security"
+    | "hydration";
   problem: string;
   whyItMatters: string;
   forbiddenConditions: string[];
@@ -225,7 +243,7 @@ export const ATOMIC_CONSTRAINTS: Record<string, AtomicConstraint> = {
         "// ❌ Invalid: Client Component declared as an async function\n'use client';\nexport default async function UserProfile() {\n  const res = await fetch('/api/user');\n  const user = await res.json();\n  return <div>{user.name}</div>;\n}"
       ],
       valid: [
-        "// ✅ Valid: Keep Client Component synchronous, fetch data in a parent Server Component\n// page.tsx (Server Component)\nimport UserProfile from './user-profile';\nexport default async function Page() {\n  const res = await fetch('https://api.example.com/user');\n  const user = await res.json();\n  return <UserProfile user={user} />;\n}\n\n// user-profile.tsx (Client Component)\n'use client';\nexport default function UserProfile({ user }) {\n  return <div>{user.name}</div>;\n}"
+        "// ✅ Valid: Keep Client Component synchronous, fetch data in a parent\n// Server Component\n// page.tsx (Server Component)\nimport UserProfile from './user-profile';\nexport default async function Page() {\n  const res = await fetch('https://api.example.com/user');\n  const user = await res.json();\n  return <UserProfile user={user} />;\n}\n\n// user-profile.tsx (Client Component)\n'use client';\nexport default function UserProfile({ user }) {\n  return <div>{user.name}</div>;\n}"
       ]
     }
   },
@@ -588,10 +606,10 @@ export const ATOMIC_CONSTRAINTS: Record<string, AtomicConstraint> = {
     ],
     examples: {
       invalid: [
-        "// ❌ Invalid: Relying on Route Handler mutation which does not invalidate the client Router Cache\n// app/posts/page.tsx (Client Component)\n'use client';\nexport default function Page() {\n  const handleMutate = async () => {\n    await fetch('/api/posts/create', { method: 'POST' });\n    // Bypasses Router Cache invalidation; navigating back will show stale data!\n  };\n  return <button onClick={handleMutate}>Create Post</button>;\n}"
+        "// ❌ Invalid: Relying on Route Handler mutation which does not\n// invalidate the client Router Cache\n// app/posts/page.tsx (Client Component)\n'use client';\nexport default function Page() {\n  const handleMutate = async () => {\n    await fetch('/api/posts/create', {\n      method: 'POST'\n    });\n    // Bypasses Router Cache invalidation;\n    // navigating back will show stale data!\n  };\n  return (\n    <button onClick={handleMutate}>\n      Create Post\n    </button>\n  );\n}"
       ],
       valid: [
-        "// ✅ Valid: Perform mutation via a Server Action which automatically triggers Router Cache invalidation\n// app/posts/actions.ts\n'use server';\nimport { revalidatePath } from 'next/cache';\nexport async function createPost() {\n  await db.createPost();\n  revalidatePath('/posts'); // Invalidates both Data Cache and Router Cache\n}"
+        "// ✅ Valid: Perform mutation via a Server Action which automatically\n// triggers Router Cache invalidation\n// app/posts/actions.ts\n'use server';\nimport { revalidatePath } from 'next/cache';\nexport async function createPost() {\n  await db.createPost();\n  // Invalidates both Data Cache and Router Cache\n  revalidatePath('/posts');\n}"
       ]
     }
   },
@@ -942,10 +960,10 @@ export const ATOMIC_CONSTRAINTS: Record<string, AtomicConstraint> = {
     ],
     examples: {
       invalid: [
-        "// ❌ Invalid: Intercepting route folder setup without rendering it in parent layout\n// app/gallery/(.)photo/[id]/page.tsx\nexport default function PhotoModal() { return <Modal>...</Modal>; }\n\n// app/gallery/layout.tsx (Missing @modal parallel slot rendering)\nexport default function Layout({ children }) {\n  return <div>{children}</div>;\n}"
+        "// ❌ Invalid: Intercepting route folder setup without\n// rendering it in parent layout\n// app/gallery/(.)photo/[id]/page.tsx\nexport default function PhotoModal() {\n  return <Modal>...</Modal>;\n}\n\n// app/gallery/layout.tsx (Missing @modal parallel slot rendering)\nexport default function Layout({ children }) {\n  return <div>{children}</div>;\n}"
       ],
       valid: [
-        "// ✅ Valid: Render the intercepted route using a parallel route slot in the layout\n// app/gallery/layout.tsx\nexport default function Layout({ children, modal }) {\n  return (\n    <div>\n      {children}\n      {modal}\n    </div>\n  );\n}\n\n// app/gallery/@modal/default.tsx\nexport default function Default() { return null; }"
+        "// ✅ Valid: Render the intercepted route using a parallel\n// route slot in the layout\n// app/gallery/layout.tsx\nexport default function Layout({ children, modal }) {\n  return (\n    <div>\n      {children}\n      {modal}\n    </div>\n  );\n}\n\n// app/gallery/@modal/default.tsx\nexport default function Default() {\n  return null;\n}"
       ]
     }
   },
@@ -975,10 +993,10 @@ export const ATOMIC_CONSTRAINTS: Record<string, AtomicConstraint> = {
     ],
     examples: {
       invalid: [
-        "// ❌ Invalid: Awaiting slow data directly in page renders without Suspense wrapping\nexport default async function Page() {\n  const data = await fetchSlowData();\n  return <DataView data={data} />;\n}"
+        "// ❌ Invalid: Awaiting slow data directly in page renders\n// without Suspense wrapping\nexport default async function Page() {\n  const data = await fetchSlowData();\n  return <DataView data={data} />;\n}"
       ],
       valid: [
-        "// ✅ Valid: Extract data-fetching into a child component and wrap in Suspense\nimport { Suspense } from 'react';\n\nasync function DataComponent() {\n  const data = await fetchSlowData();\n  return <DataView data={data} />;\n}\n\nexport default function Page() {\n  return (\n    <Suspense fallback={<Skeleton />}>\n      <DataComponent />\n    </Suspense>\n  );\n}"
+        "// ✅ Valid: Extract data-fetching into a child component\n// and wrap in Suspense\nimport { Suspense } from 'react';\n\nasync function DataComponent() {\n  const data = await fetchSlowData();\n  return <DataView data={data} />;\n}\n\nexport default function Page() {\n  return (\n    <Suspense fallback={<Skeleton />}>\n      <DataComponent />\n    </Suspense>\n  );\n}"
       ]
     }
   },
@@ -1032,10 +1050,10 @@ export const ATOMIC_CONSTRAINTS: Record<string, AtomicConstraint> = {
     ],
     examples: {
       invalid: [
-        "// ❌ Invalid: Layout component blocks rendering of all nested pages on a slow fetch\nexport default async function Layout({ children }) {\n  const settings = await fetchSiteSettings();\n  return (\n    <div>\n      <Header settings={settings} />\n      {children}\n    </div>\n  );\n}"
+        "// ❌ Invalid: Layout component blocks rendering of all nested\n// pages on a slow fetch\nexport default async function Layout({ children }) {\n  const settings = await fetchSiteSettings();\n  return (\n    <div>\n      <Header settings={settings} />\n      {children}\n    </div>\n  );\n}"
       ],
       valid: [
-        "// ✅ Valid: Move the layout-level fetch into a Suspense-wrapped child component\nimport { Suspense } from 'react';\n\nasync function LayoutHeader() {\n  const settings = await fetchSiteSettings();\n  return <Header settings={settings} />;\n}\n\nexport default function Layout({ children }) {\n  return (\n    <div>\n      <Suspense fallback={<HeaderSkeleton />}>\n        <LayoutHeader />\n      </Suspense>\n      {children}\n    </div>\n  );\n}"
+        "// ✅ Valid: Move the layout-level fetch into a\n// Suspense-wrapped child component\nimport { Suspense } from 'react';\n\nasync function LayoutHeader() {\n  const settings = await fetchSiteSettings();\n  return <Header settings={settings} />;\n}\n\nexport default function Layout({ children }) {\n  return (\n    <div>\n      <Suspense fallback={<HeaderSkeleton />}>\n        <LayoutHeader />\n      </Suspense>\n      {children}\n    </div>\n  );\n}"
       ]
     }
   },
@@ -1078,10 +1096,10 @@ export const ATOMIC_CONSTRAINTS: Record<string, AtomicConstraint> = {
     ],
     examples: {
       invalid: [
-        "// ❌ Invalid: Sequential await calls causing a waterfall delay\nexport default async function Page() {\n  const user = await fetchUser(); // Takes 200ms\n  const posts = await fetchPosts(); // Takes 300ms (Total: 500ms)\n  return <Dashboard user={user} posts={posts} />;\n}"
+        "// ❌ Invalid: Sequential await calls causing a waterfall delay\nexport default async function Page() {\n  const user = await fetchUser(); // Takes 200ms\n  const posts = await fetchPosts(); // Takes 300ms\n  return (\n    <Dashboard\n      user={user}\n      posts={posts}\n    />\n  );\n}"
       ],
       valid: [
-        "// ✅ Valid: Fetch data in parallel using Promise.all()\nexport default async function Page() {\n  const [user, posts] = await Promise.all([\n    fetchUser(),\n    fetchPosts()\n  ]); // Total: 300ms (run in parallel)\n  return <Dashboard user={user} posts={posts} />;\n}"
+        "// ✅ Valid: Fetch data in parallel using Promise.all()\nexport default async function Page() {\n  const [user, posts] = await Promise.all([\n    fetchUser(),\n    fetchPosts()\n  ]);\n  return (\n    <Dashboard\n      user={user}\n      posts={posts}\n    />\n  );\n}"
       ]
     }
   },
@@ -1107,10 +1125,10 @@ export const ATOMIC_CONSTRAINTS: Record<string, AtomicConstraint> = {
     ],
     examples: {
       invalid: [
-        "// ❌ Invalid: Missing the second 'type' argument for dynamic route revalidation\nimport { revalidatePath } from 'next/cache';\nexport async function updatePost() {\n  revalidatePath('/blog/[slug]');\n}"
+        "// ❌ Invalid: Missing the second 'type' argument for\n// dynamic route revalidation\nimport { revalidatePath } from 'next/cache';\nexport async function updatePost() {\n  revalidatePath('/blog/[slug]');\n}"
       ],
       valid: [
-        "// ✅ Valid: Provide the 'page' or 'layout' type parameter for dynamic segments\nimport { revalidatePath } from 'next/cache';\nexport async function updatePost() {\n  revalidatePath('/blog/[slug]', 'page');\n}"
+        "// ✅ Valid: Provide the 'page' or 'layout' type parameter\n// for dynamic segments\nimport { revalidatePath } from 'next/cache';\nexport async function updatePost() {\n  revalidatePath('/blog/[slug]', 'page');\n}"
       ]
     }
   },
@@ -1134,10 +1152,10 @@ export const ATOMIC_CONSTRAINTS: Record<string, AtomicConstraint> = {
     ],
     examples: {
       invalid: [
-        "// ❌ Invalid: Missing caching for an expensive database query or layout component\nexport async function getExpensiveStats() {\n  return db.select().from(statsTable);\n}"
+        "// ❌ Invalid: Missing caching for an expensive database query\nexport async function getExpensiveStats() {\n  return db.select().from(statsTable);\n}"
       ],
       valid: [
-        "// ✅ Valid: Cache the function output using Next.js 15 'use cache' directive\nexport async function getExpensiveStats() {\n  'use cache';\n  return db.select().from(statsTable);\n}"
+        "// ✅ Valid: Cache the function output using Next.js 15\n// 'use cache' directive\nexport async function getExpensiveStats() {\n  'use cache';\n  return db.select().from(statsTable);\n}"
       ]
     }
   },
@@ -1161,10 +1179,10 @@ export const ATOMIC_CONSTRAINTS: Record<string, AtomicConstraint> = {
     ],
     examples: {
       invalid: [
-        "// ❌ Invalid: next.config.js missing experimental.optimizePackageImports for heavy libraries\nmodule.exports = {\n  // missing config\n};"
+        "// ❌ Invalid: next.config.js missing experimental.optimizePackageImports\n// for heavy libraries\nmodule.exports = {\n  // missing config\n};"
       ],
       valid: [
-        "// ✅ Valid: Enable package optimization in next.config.js\nmodule.exports = {\n  experimental: {\n    optimizePackageImports: ['lucide-react', 'react-icons']\n  }\n};"
+        "// ✅ Valid: Enable package optimization in next.config.js\nmodule.exports = {\n  experimental: {\n    optimizePackageImports: [\n      'lucide-react',\n      'react-icons'\n    ]\n  }\n};"
       ]
     }
   },
@@ -1188,7 +1206,7 @@ export const ATOMIC_CONSTRAINTS: Record<string, AtomicConstraint> = {
     ],
     examples: {
       invalid: [
-        "// ❌ Invalid: Private database initialization module leaks credentials if imported in Client Components\n// app/lib/db.ts\nimport { PrismaClient } from '@prisma/client';\nexport const prisma = new PrismaClient();"
+        "// ❌ Invalid: Private database initialization module leaks credentials\n// if imported in Client Components\n// app/lib/db.ts\nimport { PrismaClient } from '@prisma/client';\nexport const prisma = new PrismaClient();"
       ],
       valid: [
         "// ✅ Valid: Secure the backend-only boundary by importing 'server-only'\n// app/lib/db.ts\nimport 'server-only';\nimport { PrismaClient } from '@prisma/client';\nexport const prisma = new PrismaClient();"
@@ -1221,10 +1239,10 @@ export const ATOMIC_CONSTRAINTS: Record<string, AtomicConstraint> = {
     ],
     examples: {
       invalid: [
-        "// ❌ Invalid: Importing a large static data file inside a Client Component\n'use client';\nimport countries from './large-countries.json'; // 150KB file\nexport default function Selector() {\n  return <select>{countries.map(c => <option key={c.code}>{c.name}</option>)}</select>;\n}"
+        "// ❌ Invalid: Importing a large static data file\n// inside a Client Component\n'use client';\nimport countries from './large-countries.json';\nexport default function Selector() {\n  return (\n    <select>\n      {countries.map(c => (\n        <option key={c.code}>\n          {c.name}\n        </option>\n      ))}\n    </select>\n  );\n}"
       ],
       valid: [
-        "// ✅ Valid: Load the large static data file in a Server Component and pass down\n// page.tsx (Server Component)\nimport countries from './large-countries.json';\nimport Selector from './selector';\nexport default function Page() {\n  // Pass clean, minimal options DTO to the client\n  const options = countries.map(c => ({ code: c.code, name: c.name }));\n  return <Selector options={options} />;\n}\n\n// selector.tsx (Client Component)\n'use client';\nexport default function Selector({ options }) {\n  return <select>{options.map(o => <option key={o.code}>{o.name}</option>)}</select>;\n}"
+        "// ✅ Valid: Load the large static data file in a Server Component\n// and pass down\n// page.tsx (Server Component)\nimport countries from './large-countries.json';\nimport Selector from './selector';\nexport default function Page() {\n  // Pass clean, minimal options DTO to the client\n  const options = countries.map(c => ({\n    code: c.code,\n    name: c.name\n  }));\n  return <Selector options={options} />;\n}\n\n// selector.tsx (Client Component)\n'use client';\nexport default function Selector({ options }) {\n  return (\n    <select>\n      {options.map(o => (\n        <option key={o.code}>\n          {o.name}\n        </option>\n      ))}\n    </select>\n  );\n}"
       ]
     }
   },
@@ -1354,26 +1372,7 @@ export function mapEventToDiagnostic(
   ]);
   const baseSeverity = ERROR_CONSTRAINTS.has(constraint.id) ? "error" : "warning";
 
-  let examples = constraint.examples;
-  if (!examples) {
-    try {
-      const registry = getRegistry();
-      let regConstraint = registry.getConstraintById(constraintId);
-      if (regConstraint && regConstraint.examples) {
-        examples = regConstraint.examples;
-      } else {
-        const mappedId = REGISTRY_MAP[constraintId];
-        if (mappedId) {
-          regConstraint = registry.getConstraintById(mappedId);
-          if (regConstraint && regConstraint.examples) {
-            examples = regConstraint.examples;
-          }
-        }
-      }
-    } catch (err) {
-      console.error(`[mapEventToDiagnostic] Failed to resolve examples for ${constraintId}:`, err);
-    }
-  }
+  let examples = resolveExamplesForConstraint(constraintId);
 
   return {
     file,
@@ -1393,4 +1392,29 @@ export function mapEventToDiagnostic(
     isGuarded,
     examples
   };
+}
+
+export function resolveExamplesForConstraint(constraintId: string): { valid: string[]; invalid: string[] } | undefined {
+  const constraint = ATOMIC_CONSTRAINTS[constraintId];
+  let examples = constraint?.examples;
+  if (!examples) {
+    try {
+      const registry = getRegistry();
+      let regConstraint = registry.getConstraintById(constraintId);
+      if (regConstraint && regConstraint.examples) {
+        examples = regConstraint.examples;
+      } else {
+        const mappedId = REGISTRY_MAP[constraintId];
+        if (mappedId) {
+          regConstraint = registry.getConstraintById(mappedId);
+          if (regConstraint && regConstraint.examples) {
+            examples = regConstraint.examples;
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`[resolveExamplesForConstraint] Failed to resolve examples for ${constraintId}:`, err);
+    }
+  }
+  return examples;
 }
