@@ -286,13 +286,15 @@ export async function analyzeFile(
 
   // ── Apply Semantic Classification & Intelligence ─────────────────────────
 
+  const fileContent = sourceFile.getFullText();
+
   const enhancedFetchCalls = evaluateFetchSemantics(rawAnalysis.fetchCalls, rawAnalysis.isClientComponent);
   const semanticKind = detectSemanticKind(rawAnalysis);
   const runtimeType = detectRuntimeType(semanticKind);
-  const runtime = detectRuntime(rawAnalysis);
-  const rendering = detectRenderingMode(rawAnalysis);
-  const hydration = detectHydration(rawAnalysis);
-  const boundaries = classifyBoundaries(rawAnalysis, semanticKind);
+  const runtime = detectRuntime(rawAnalysis, fileContent);
+  const rendering = detectRenderingMode(rawAnalysis, fileContent);
+  const hydration = detectHydration(rawAnalysis, fileContent);
+  const boundaries = classifyBoundaries(rawAnalysis, semanticKind, fileContent);
 
   const executionModel = buildExecutionModel(rawAnalysis, sourceFile);
 

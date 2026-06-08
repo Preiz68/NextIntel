@@ -16,11 +16,12 @@ function isDeferredOrCallback(callNode: Node): boolean {
       const parent = current.getParent();
       if (parent && parent.getKind() === SyntaxKind.CallExpression) {
         const callerText = (parent as any).getExpression().getText();
+        const hookName = callerText.includes(".") ? callerText.split(".").pop() : callerText;
         if (
-          callerText === "useEffect" ||
-          callerText === "useLayoutEffect" ||
-          callerText === "useCallback" ||
-          callerText === "useMemo"
+          hookName === "useEffect" ||
+          hookName === "useLayoutEffect" ||
+          hookName === "useCallback" ||
+          hookName === "useMemo"
         ) {
           return true;
         }

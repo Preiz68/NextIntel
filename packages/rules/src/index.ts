@@ -58,6 +58,20 @@ import { serverActionsBrowserApi } from "./architecture/server-actions-browser-a
 import { noMixedBarrelFiles } from "./architecture/no-mixed-barrel-files.js";
 import { serverActionsLexicalClosures } from "./architecture/server-actions-lexical-closures.js";
 import { serverOnlyBoundary } from "./architecture/server-only-boundary.js";
+import { noClientDirectiveOnRoutingBoundaries } from "./architecture/no-client-directive-on-routing-boundaries.js";
+import { enforceDalIsolation } from "./architecture/enforce-dal-isolation.js";
+import { preferServerActionsForMutations } from "./architecture/prefer-server-actions-for-mutations.js";
+import { missingRouteLoadingBoundary } from "./architecture/missing-route-loading-boundary.js";
+import { enforceServerOnlyOnDal } from "./architecture/enforce-server-only-on-dal.js";
+import { deferDynamicApisToSuspense } from "./architecture/defer-dynamic-apis-to-suspense.js";
+import { noServerActionsInClientFiles } from "./architecture/no-server-actions-in-client-files.js";
+import { noDuplicateProviders } from "./architecture/no-duplicate-providers.js";
+import { requireErrorBoundaryForActions } from "./architecture/require-error-boundary-for-actions.js";
+import { noDirectRouteHandlerImports } from "./architecture/no-direct-route-handler-imports.js";
+import { actionArchitectureRules } from "./architecture/action-architecture-rules.js";
+import { routingStructureRules } from "./architecture/routing-structure-rules.js";
+import { dataFetchingCachingRules } from "./architecture/data-fetching-caching-rules.js";
+import { clientLifecyclePerformanceRules } from "./architecture/client-lifecycle-performance-rules.js";
 
 // ── Production Layer Rules ───────────────────────────────────────────────────
 import { securityNoPublicSecrets } from "./production/security-no-public-secrets.js";
@@ -107,6 +121,20 @@ export const rules = [
   noMixedBarrelFiles,
   serverActionsLexicalClosures,
   serverOnlyBoundary,
+  noClientDirectiveOnRoutingBoundaries,
+  enforceDalIsolation,
+  preferServerActionsForMutations,
+  missingRouteLoadingBoundary,
+  enforceServerOnlyOnDal,
+  deferDynamicApisToSuspense,
+  noServerActionsInClientFiles,
+  noDuplicateProviders,
+  requireErrorBoundaryForActions,
+  noDirectRouteHandlerImports,
+  actionArchitectureRules,
+  routingStructureRules,
+  dataFetchingCachingRules,
+  clientLifecyclePerformanceRules,
 
   // Production Layer
   securityNoPublicSecrets,

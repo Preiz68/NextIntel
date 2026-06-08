@@ -46,6 +46,7 @@ export type { ScoringResult } from "./scoring.js";
 let lastGraphNodes: Map<string, any> | null = null;
 let lastGraph: any = null;
 let lastAnalyses: any[] | null = null;
+let lastAnalysesMap: Map<string, any> | null = null;
 
 export function getLastGraph() {
   return lastGraph;
@@ -74,6 +75,10 @@ export class RuleEngine {
     lastGraphNodes = context.nodes;
     lastGraph = context.graph;
     lastAnalyses = context.analyses;
+    lastAnalysesMap = new Map();
+    for (const a of context.analyses) {
+      lastAnalysesMap.set(a.filePath, a);
+    }
 
     // Propagate execution environments in the dependency graph
     propagateRuntimeContexts(context.graph, context.nodes, context.analyses);
@@ -229,6 +234,11 @@ export function propagateRuntimeContexts(
   resolvedOwnerships.clear();
   resolvedRuntimes.clear();
 
+  const analysesMap = new Map<string, any>();
+  for (const a of analyses) {
+    analysesMap.set(a.filePath, a);
+  }
+
   // Synchronize node.semanticKind with statically analyzed semanticKind if node has generic "util"
   for (const a of analyses) {
     const node = nodes.get(a.filePath);
@@ -241,7 +251,7 @@ export function propagateRuntimeContexts(
   for (const nodePath of nodes.keys()) {
     const node = nodes.get(nodePath);
     const kind = node?.semanticKind ?? "unknown";
-    const analysis = analyses.find((a) => a.filePath === nodePath);
+    const analysis = analysesMap.get(nodePath);
 
     let ownership: ExecutionOwnership = "server-only";
     let runtime: RuntimeEnvironment = "node";
@@ -282,7 +292,7 @@ export function propagateRuntimeContexts(
     for (const succ of successors) {
       if (!visitedFromClient.has(succ)) {
         const succNode = nodes.get(succ);
-        const succAnalysis = analyses.find((a: any) => a.filePath === succ);
+        const succAnalysis = analysesMap.get(succ);
 
         const isStaticallyServer =
           !!(succNode?.isServerComponent ||
@@ -332,7 +342,7 @@ export function propagateRuntimeContexts(
   const visitedFromEdge = new Set<string>();
   const qEdge: string[] = [];
   for (const nodePath of nodes.keys()) {
-    const analysis = analyses.find((a) => a.filePath === nodePath);
+    const analysis = analysesMap.get(nodePath);
     if (analysis?.isEdgeRuntime || resolvedOwnerships.get(nodePath) === "edge-runtime") {
       qEdge.push(nodePath);
       visitedFromEdge.add(nodePath);
@@ -404,7 +414,7 @@ export function propagateRuntimeContexts(
       } else if (own === "server-only" || own === "server-entry" || own === "action-runtime" || own === "edge-runtime") {
         newKind = "server-util";
       } else if (own === "shared-isomorphic") {
-        const a = analyses.find((x: any) => x.filePath === nodePath);
+        const a = analysesMap.get(nodePath);
         const usesBrowser = a?.executionModel?.usesBrowserApis && a.executionModel.usesBrowserApis.length > 0;
         const usesServer = a?.executionModel?.usesServerApis && a.executionModel.usesServerApis.length > 0;
 
@@ -501,7 +511,7 @@ export function resolveRootCause(
           isActionFilePath(succ);
         if (isServerAction) continue;
 
-        const succAnalysis = lastAnalyses?.find((a: any) => a.filePath === succ);
+        const succAnalysis = lastAnalysesMap?.get(succ);
         const hasServerApi =
           (succAnalysis?.executionModel?.usesServerApis && succAnalysis.executionModel.usesServerApis.length > 0) ||
           succAnalysis?.executionModel?.boundaryViolations?.includes("server APIs in client");
@@ -524,7 +534,7 @@ export function resolveRootCause(
       const curr = queue.shift()!;
       const successors = graph.successors(curr) || [];
       for (const succ of successors) {
-        const succAnalysis = lastAnalyses?.find((a: any) => a.filePath === succ);
+        const succAnalysis = lastAnalysesMap?.get(succ);
         const hasTaint = succAnalysis?.taints?.some(
           (t: any) => t.type === "NODE_NATIVE_API" || t.type === "PROCESS_ENV"
         );
@@ -603,13 +613,13 @@ export function buildDependencyPath(
         if (constraintId === "CC-SERVER-IMPORT-001") {
           isTarget = !!(succNode?.isServerComponent || succNode?.semanticKind === "server-component");
         } else if (constraintId === "CC-RUNTIME-LEAK-001") {
-          const succAnalysis = lastAnalyses?.find((a: any) => a.filePath === succ);
+          const succAnalysis = lastAnalysesMap?.get(succ);
           isTarget = !!(
             (succAnalysis?.executionModel?.usesServerApis && succAnalysis.executionModel.usesServerApis.length > 0) ||
             succAnalysis?.executionModel?.boundaryViolations?.includes("server APIs in client")
           );
         } else if (constraintId === "RU-001-CRITICAL" || constraintId === "RU-001-HIGH") {
-          const succAnalysis = lastAnalyses?.find((a: any) => a.filePath === succ);
+          const succAnalysis = lastAnalysesMap?.get(succ);
           isTarget = !!(
             succAnalysis?.taints?.some(
               (t: any) => t.type === "NODE_NATIVE_API" || t.type === "PROCESS_ENV"

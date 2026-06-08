@@ -71,9 +71,14 @@ function resolveSpecifier(
     path.join(base, "index.js"),
   ];
 
+  // Pass 1: Try resolving using the in-memory set of known project files (avoid disk I/O)
   for (const candidate of candidates) {
     const normalized = normalizePath(candidate);
     if (knownFiles.has(normalized)) return normalized;
+  }
+
+  // Pass 2: Fall back to synchronous file system checks only for files not in knownFiles
+  for (const candidate of candidates) {
     if (fs.existsSync(candidate)) return normalizePath(candidate);
   }
 

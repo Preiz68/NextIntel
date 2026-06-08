@@ -29,7 +29,7 @@ function splitWords(name: string): string[] {
 function isMutationAction(
   actionNode: FunctionDeclaration | ArrowFunction | FunctionExpression
 ): boolean {
-  const baseMutationKeywords = ["create", "update", "delete", "insert", "remove", "save", "patch", "upsert", "write", "execute", "replace"];
+  const baseMutationKeywords = ["create", "update", "delete", "insert", "remove", "save", "patch", "upsert", "write", "execute", "replace", "set"];
 
   // 1. Check if the function name or variable assignment name contains mutation keywords as whole words
   let actionName = "";
@@ -60,6 +60,14 @@ function isMutationAction(
     }
     
     if (name) {
+      const lowerName = name.toLowerCase();
+      if (
+        lowerName === "revalidatepath" ||
+        lowerName === "revalidatetag" ||
+        lowerName === "redirect"
+      ) {
+        return true;
+      }
       const words = splitWords(name);
       if (baseMutationKeywords.some(kw => words.includes(kw))) {
         return true;

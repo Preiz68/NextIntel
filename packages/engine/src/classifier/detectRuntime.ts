@@ -5,7 +5,7 @@ import fs from "node:fs";
 /**
  * Derives the execution runtime of the Next.js component.
  */
-export function detectRuntime(analysis: FileAnalysis): RuntimeContext {
+export function detectRuntime(analysis: FileAnalysis, fileContent?: string): RuntimeContext {
   if (analysis.isClientComponent) {
     return "client";
   }
@@ -15,16 +15,22 @@ export function detectRuntime(analysis: FileAnalysis): RuntimeContext {
     return "edge";
   }
 
+  if (analysis.isEdgeRuntime) {
+    return "edge";
+  }
+
   // Detect explicit segment configuration: export const runtime = 'edge'
-  if (fs.existsSync(analysis.filePath)) {
+  const content = fileContent !== undefined ? fileContent : (() => {
     try {
-      const content = fs.readFileSync(analysis.filePath, "utf8");
-      if (/export\s+const\s+runtime\s*=\s*['"]edge['"]/.test(content)) {
-        return "edge";
+      if (fs.existsSync(analysis.filePath)) {
+        return fs.readFileSync(analysis.filePath, "utf8");
       }
-    } catch (e) {
-      // ignore
-    }
+    } catch {}
+    return null;
+  })();
+
+  if (content !== null && /export\s+const\s+runtime\s*=\s*['"]edge['"]/.test(content)) {
+    return "edge";
   }
 
   return "server";

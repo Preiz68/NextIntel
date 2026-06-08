@@ -7,7 +7,8 @@ import fs from "node:fs";
  */
 export function classifyBoundaries(
   analysis: FileAnalysis,
-  componentType: SemanticKind
+  componentType: SemanticKind,
+  fileContent?: string
 ): BoundarySemantics {
   const violations: string[] = [];
 
@@ -33,16 +34,26 @@ export function classifyBoundaries(
 
   // Over-hydration heuristic: check if component body has large static markup structures (> 40 JSX tags)
   let isOverHydrated = false;
-  if (componentType === "client-component" && fs.existsSync(analysis.filePath)) {
-    try {
-      const content = fs.readFileSync(analysis.filePath, "utf8");
-      const jsxTags = (content.match(/<[a-zA-Z]/g) || []).length;
-      if (jsxTags > 40) {
-        isOverHydrated = true;
-        violations.push("over-hydration-risk");
+  if (componentType === "client-component") {
+    const content = fileContent !== undefined ? fileContent : (() => {
+      try {
+        if (fs.existsSync(analysis.filePath)) {
+          return fs.readFileSync(analysis.filePath, "utf8");
+        }
+      } catch {}
+      return null;
+    })();
+
+    if (content !== null) {
+      try {
+        const jsxTags = (content.match(/<[a-zA-Z]/g) || []).length;
+        if (jsxTags > 40) {
+          isOverHydrated = true;
+          violations.push("over-hydration-risk");
+        }
+      } catch (e) {
+        // ignore
       }
-    } catch (e) {
-      // ignore
     }
   }
 

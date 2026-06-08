@@ -484,6 +484,7 @@ export function analyzeDirectTaints(sourceFile: SourceFile): TaintDetails[] {
  */
 export class TaintEngine {
   private moduleTaints: Map<string, ModuleTaintSummary> = new Map();
+  private analysesMap: Map<string, any> = new Map();
 
   constructor(
     private filePaths: string[],
@@ -491,7 +492,13 @@ export class TaintEngine {
     private nodes: Map<string, any>,
     private directTaintsMap: Map<string, TaintDetails[]>,
     private analyses?: any[]
-  ) {}
+  ) {
+    if (analyses) {
+      for (const a of analyses) {
+        this.analysesMap.set(a.filePath, a);
+      }
+    }
+  }
 
   propagate(): Map<string, ModuleTaintSummary> {
     const visitedEdges = new Set<string>();
@@ -527,7 +534,7 @@ export class TaintEngine {
         let changed = false;
 
         if (this.analyses) {
-          const importerAnalysis = this.analyses.find((a) => a.filePath === importer);
+          const importerAnalysis = this.analysesMap.get(importer);
           if (importerAnalysis) {
             const importsFromB = importerAnalysis.importDetails.filter((imp: any) => {
               const resolved = path.resolve(path.dirname(importer), imp.moduleSpecifier).replace(/\\/g, "/");

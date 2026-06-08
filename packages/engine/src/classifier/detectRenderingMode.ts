@@ -7,7 +7,7 @@ import path from "node:path";
  * Determines the rendering mode (static, dynamic, isr, etc.) based on
  * AST analysis, fetch calls, and segment configuration properties.
  */
-export function detectRenderingMode(analysis: FileAnalysis): RenderingSemantics {
+export function detectRenderingMode(analysis: FileAnalysis, fileContent?: string): RenderingSemantics {
   const triggers: DynamicTrigger[] = [];
   let hasGenerateStaticParams = false;
   let revalidate: RenderingSemantics["revalidate"] = null;
@@ -24,10 +24,17 @@ export function detectRenderingMode(analysis: FileAnalysis): RenderingSemantics 
   }
 
   // Parse page-level segment configurations from file content
-  if (fs.existsSync(analysis.filePath)) {
+  const content = fileContent !== undefined ? fileContent : (() => {
     try {
-      const content = fs.readFileSync(analysis.filePath, "utf8");
-      
+      if (fs.existsSync(analysis.filePath)) {
+        return fs.readFileSync(analysis.filePath, "utf8");
+      }
+    } catch {}
+    return null;
+  })();
+
+  if (content !== null) {
+    try {
       const revalMatch = content.match(/export\s+const\s+revalidate\s*=\s*(\d+|false|['"]force-cache['"])/);
       if (revalMatch && revalMatch[1]) {
         const val = revalMatch[1].replace(/['"]/g, "");

@@ -744,6 +744,96 @@ export async function runRulesTests() {
       assert.ok(!diags.some(d => d.file === fileB), "Should NOT warn on deferred callback use of large data");
     }
 
+    // =========================================================================
+    // 10. Test namespaced hooks in no-route-handlers-in-client-components (Task 35 refinement)
+    // =========================================================================
+    {
+      const fileA = path.join(tempDir, "namespaced-hook-route-handler.tsx");
+      fs.writeFileSync(fileA, `
+        "use client";
+        import React from "react";
+        export default function ClientComp() {
+          React.useEffect(() => {
+            fetch("/api/now");
+          }, []);
+          return <div>Test</div>;
+        }
+      `, "utf8");
+
+      const fileB = path.join(tempDir, "direct-route-handler-render.tsx");
+      fs.writeFileSync(fileB, `
+        "use client";
+        export default function ClientComp() {
+          fetch("/api/now");
+          return <div>Test</div>;
+        }
+      `, "utf8");
+
+      const context: RuleContext = {
+        analyses: [
+          createMockAnalysis(fileA, { isClientComponent: true }),
+          createMockAnalysis(fileB, { isClientComponent: true }),
+        ],
+        graph: new Graph(),
+        nodes: new Map(),
+        edges: [],
+        knowledgeRegistry: { getConstraint: () => null } as any
+      };
+
+      const { noRouteHandlersInClientComponents } = await import("./rendering/no-route-handlers-in-client-components.js");
+      const diags = noRouteHandlersInClientComponents.run(context);
+
+      assert.ok(!diags.some(d => d.file === fileA), "Should NOT flag fetch inside React.useEffect");
+      assert.ok(diags.some(d => d.file === fileB), "Should flag fetch directly in render body");
+    }
+
+    // =========================================================================
+    // 11. Test cookies().set() as mutation in server-actions-no-reads (Task 32 refinement)
+    // =========================================================================
+    {
+      const fileA = path.join(tempDir, "sa-cookie-set.ts");
+      fs.writeFileSync(fileA, `
+        'use server';
+        export async function getProfileWithCookieSet() {
+          const c = cookies();
+          c.set("token", "123");
+          return "profile";
+        }
+      `, "utf8");
+
+      const fileB = path.join(tempDir, "sa-cookie-get.ts");
+      fs.writeFileSync(fileB, `
+        'use server';
+        export async function getProfileWithCookieGet() {
+          const c = cookies();
+          return c.get("token");
+        }
+      `, "utf8");
+
+      const analyzer = await import("engine");
+      const analysisA = await analyzer.analyzeFile(fileA);
+      const analysisB = await analyzer.analyzeFile(fileB);
+
+      const re = new RuleEngine();
+      const { serverActionsNoReads } = await import("./architecture/server-actions-no-reads.js");
+      re.registerRule(serverActionsNoReads);
+
+      const results = re.run({
+        analyses: [analysisA, analysisB],
+        graph: null,
+        nodes: new Map(),
+        edges: [],
+      });
+
+      const diags = results.filter(d => d.ruleId === "server-actions-no-reads");
+
+      const fileANorm = fileA.replace(/\\/g, "/");
+      const fileBNorm = fileB.replace(/\\/g, "/");
+
+      assert.ok(!diags.some(d => d.file === fileANorm), "Should NOT flag Server Action calling cookies().set() as read-only");
+      assert.ok(diags.some(d => d.file === fileBNorm), "Should flag Server Action calling cookies().get() as read-only");
+    }
+
     console.log("✅ Rules unit tests passed!");
   } finally {
     // Cleanup temporary files

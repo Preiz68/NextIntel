@@ -127,6 +127,12 @@ const cancelTokens = new Map<string, vscode.CancellationTokenSource>();
 
 let diagnostics: vscode.DiagnosticCollection;
 
+// Workspace Cache State for Progressive Analysis
+const cachedAnalyses = new Map<string, any>(); // filePath -> SemanticFileAnalysis
+let cachedGraphResult: any = null; // BuildGraphResult
+let workspaceRoot: string | null = null;
+let isWorkspaceScanned = false;
+
 // ─────────────────────────────────────────────
 // LAZY ENGINE INIT
 // ─────────────────────────────────────────────
@@ -455,61 +461,115 @@ export function activate(context: vscode.ExtensionContext) {
   // ANALYSIS PIPELINE
   // ─────────────────────────────────────────────
 
-  async function runAnalysis(document: vscode.TextDocument) {
-    const key = document.uri.toString();
-    if (!isNextJsWorkspace(document)) {
-      if (documentDiagnostics.has(key)) {
-        documentDiagnostics.delete(key);
-        diagnostics.delete(document.uri);
-        updateDecorations(document);
+  function isWorkspaceNextJs(root: string): boolean {
+    const configNames = ["next.config.js", "next.config.mjs", "next.config.ts", "next.config.jsx", "next.config.tsx"];
+    for (const name of configNames) {
+      if (fs.existsSync(path.join(root, name))) {
+        return true;
       }
+    }
+    const pkgPath = path.join(root, "package.json");
+    if (fs.existsSync(pkgPath)) {
+      try {
+        const content = fs.readFileSync(pkgPath, "utf8");
+        const pkg = JSON.parse(content);
+        if (pkg.dependencies?.next || pkg.devDependencies?.next) {
+          return true;
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return false;
+  }
+
+  async function triggerWorkspaceScan() {
+    if (isWorkspaceScanned) return;
+    const folders = vscode.workspace.workspaceFolders;
+    if (!folders || folders.length === 0) return;
+    
+    workspaceRoot = folders[0]!.uri.fsPath;
+    if (!isWorkspaceNextJs(workspaceRoot)) {
+      output.appendLine(`ℹ️ Workspace at ${workspaceRoot} is not a Next.js project. Skipping scan.`);
       return;
     }
-    output.appendLine(`🔍 Running analysis on: ${document.fileName}`);
 
-    const prev = cancelTokens.get(key);
-    if (prev) prev.cancel();
+    isWorkspaceScanned = true;
 
-    const tokenSource = new vscode.CancellationTokenSource();
-    cancelTokens.set(key, tokenSource);
+    await vscode.window.withProgress({
+      location: vscode.ProgressLocation.Window,
+      title: "NextIntel: Indexing Next.js project...",
+      cancellable: false
+    }, async () => {
+      try {
+        const [engineModule, re] = await Promise.all([
+          getAnalyzer(),
+          getRuleEngine(),
+        ]);
 
-    try {
-      const [engineModule, re] = await Promise.all([
-        getAnalyzer(),
-        getRuleEngine(),
-      ]);
+        output.appendLine(`📂 Starting workspace scan at: ${workspaceRoot}`);
+        const { files } = await engineModule.scanProject(workspaceRoot!, { scanRootFallback: true });
+        output.appendLine(`📂 Found ${files.length} candidate files in workspace.`);
+        
+        const analyses = await engineModule.analyzeFiles(files);
+        
+        for (const analysis of analyses) {
+          cachedAnalyses.set(analysis.filePath, analysis);
+        }
 
-      const analysis = await engineModule.analyzeFile(document.fileName, {
-        fileContent: document.getText(),
-      });
+        cachedGraphResult = engineModule.buildGraph(analyses, workspaceRoot!);
+        output.appendLine(`✅ Initialized dependency graph with ${cachedGraphResult.nodes.size} nodes.`);
 
-      if (tokenSource.token.isCancellationRequested) return;
+        const results = re.run({
+          analyses: [...cachedAnalyses.values()],
+          graph: cachedGraphResult.graph,
+          nodes: cachedGraphResult.nodes,
+          edges: cachedGraphResult.edges,
+        });
 
-      const results: RuleDiagnostic[] = re.run({
-        analyses: [analysis],
-        graph: null,
-        nodes: new Map(),
-        edges: [],
-      });
+        output.appendLine(`✅ Initial scan found ${results.length} diagnostics project-wide.`);
+        updateWorkspaceDiagnostics(results);
 
-      output.appendLine(`✅ Found ${results.length} diagnostics`);
-      documentDiagnostics.set(key, results);
+      } catch (err) {
+        output.appendLine(`❌ Initial workspace scan failed: ${String(err)}`);
+        console.error(err);
+      }
+    });
+  }
 
-      // ── Map to VS Code diagnostics ────────────────────────────────────────
-      const vscodeDiags = results.map((d: RuleDiagnostic) => {
-        let parsedLine =
-          typeof d.line === "number" ? d.line : parseInt(d.line as any, 10);
+  function updateWorkspaceDiagnostics(results: RuleDiagnostic[]) {
+    const diagsByFile = new Map<string, RuleDiagnostic[]>();
+    for (const d of results) {
+      if (!d.file) continue;
+      const normalizedPath = d.file.replace(/\\/g, "/");
+      if (!diagsByFile.has(normalizedPath)) {
+        diagsByFile.set(normalizedPath, []);
+      }
+      diagsByFile.get(normalizedPath)!.push(d);
+    }
+
+    const filesToClear = new Set(documentDiagnostics.keys());
+
+    for (const [filePath, fileDiags] of diagsByFile.entries()) {
+      const uri = vscode.Uri.file(filePath);
+      const key = uri.toString();
+      
+      filesToClear.delete(key);
+      documentDiagnostics.set(key, fileDiags);
+
+      const vscodeDiags = fileDiags.map((d) => {
+        let parsedLine = typeof d.line === "number" ? d.line : parseInt(d.line as any, 10);
         if (isNaN(parsedLine)) parsedLine = 1;
         const rawLine = parsedLine - 1;
-        const safeLine = Math.max(0, Math.min(rawLine, document.lineCount - 1));
-        const lineText = document.lineAt(safeLine)?.text ?? "";
-
-        // Always span the full line so the squiggle underlines everything
+        
+        const openDoc = vscode.workspace.textDocuments.find(doc => doc.uri.toString().toLowerCase() === key.toLowerCase());
+        const lineText = openDoc && rawLine < openDoc.lineCount ? openDoc.lineAt(rawLine).text : "";
+        
         let range: vscode.Range;
         if (lineText.length === 0) {
-          range = new vscode.Range(safeLine, 0, safeLine, 0);
+          range = new vscode.Range(rawLine, 0, rawLine, 100);
         } else {
-          range = new vscode.Range(safeLine, 0, safeLine, lineText.length);
+          range = new vscode.Range(rawLine, 0, rawLine, lineText.length);
         }
 
         let severity = vscode.DiagnosticSeverity.Warning;
@@ -532,14 +592,103 @@ export function activate(context: vscode.ExtensionContext) {
         return diag;
       });
 
-      diagnostics.set(document.uri, vscodeDiags);
-      output.appendLine(`🔥 Set ${vscodeDiags.length} diagnostics`);
+      diagnostics.set(uri, vscodeDiags);
+    }
 
-      // ── Refresh inline UI ────────────────────────────────────────────────
-      codeLensProvider.refresh();
-      updateDecorations(document);
+    for (const key of filesToClear) {
+      documentDiagnostics.delete(key);
+      const uri = vscode.Uri.parse(key);
+      diagnostics.delete(uri);
+    }
+
+    const activeEditor = vscode.window.activeTextEditor;
+    if (activeEditor) {
+      updateDecorations(activeEditor.document);
+    }
+    codeLensProvider.refresh();
+  }
+
+  async function triggerIncrementalAnalysis() {
+    if (!isWorkspaceScanned) return;
+    try {
+      const [engineModule, re] = await Promise.all([
+        getAnalyzer(),
+        getRuleEngine(),
+      ]);
+
+      if (!workspaceRoot) {
+        const folders = vscode.workspace.workspaceFolders;
+        if (folders && folders.length > 0) {
+          workspaceRoot = folders[0]!.uri.fsPath;
+        }
+      }
+
+      cachedGraphResult = engineModule.buildGraph([...cachedAnalyses.values()], workspaceRoot ?? "");
+      
+      const results = re.run({
+        analyses: [...cachedAnalyses.values()],
+        graph: cachedGraphResult.graph,
+        nodes: cachedGraphResult.nodes,
+        edges: cachedGraphResult.edges,
+      });
+
+      updateWorkspaceDiagnostics(results);
     } catch (err) {
-      output.appendLine(`❌ Analysis failed: ${String(err)}`);
+      output.appendLine(`❌ Incremental analysis failed: ${String(err)}`);
+    }
+  }
+
+  async function runAnalysis(document: vscode.TextDocument) {
+    const key = document.uri.toString();
+    if (!isNextJsWorkspace(document)) {
+      if (documentDiagnostics.has(key)) {
+        documentDiagnostics.delete(key);
+        diagnostics.delete(document.uri);
+        updateDecorations(document);
+      }
+      return;
+    }
+
+    if (!isWorkspaceScanned) {
+      await triggerWorkspaceScan();
+    }
+
+    output.appendLine(`🔍 Running progressive analysis on: ${document.fileName}`);
+
+    const prev = cancelTokens.get(key);
+    if (prev) prev.cancel();
+
+    const tokenSource = new vscode.CancellationTokenSource();
+    cancelTokens.set(key, tokenSource);
+
+    try {
+      const [engineModule, re] = await Promise.all([
+        getAnalyzer(),
+        getRuleEngine(),
+      ]);
+
+      const analysis = await engineModule.analyzeFile(document.fileName, {
+        fileContent: document.getText(),
+      });
+
+      if (tokenSource.token.isCancellationRequested) return;
+
+      cachedAnalyses.set(analysis.filePath, analysis);
+
+      cachedGraphResult = engineModule.buildGraph([...cachedAnalyses.values()], workspaceRoot ?? "");
+
+      const results = re.run({
+        analyses: [...cachedAnalyses.values()],
+        graph: cachedGraphResult.graph,
+        nodes: cachedGraphResult.nodes,
+        edges: cachedGraphResult.edges,
+      });
+
+      output.appendLine(`✅ Found ${results.length} diagnostics total`);
+      updateWorkspaceDiagnostics(results);
+
+    } catch (err) {
+      output.appendLine(`❌ Progressive analysis failed: ${String(err)}`);
       console.error(err);
     } finally {
       cancelTokens.delete(key);
@@ -613,12 +762,49 @@ export function activate(context: vscode.ExtensionContext) {
     },
   );
 
+  // File system watchers to keep cache in sync
+  const fileWatcher = vscode.workspace.createFileSystemWatcher("**/*.{ts,tsx,js,jsx}");
+  
+  fileWatcher.onDidCreate(async (uri) => {
+    try {
+      const engineModule = await getAnalyzer();
+      const filePath = engineModule.normalizePath(uri.fsPath);
+      const analysis = await engineModule.analyzeFile(uri.fsPath);
+      cachedAnalyses.set(filePath, analysis);
+      triggerIncrementalAnalysis();
+    } catch (err) {
+      output.appendLine(`❌ Error handling file creation: ${String(err)}`);
+    }
+  });
+
+  fileWatcher.onDidDelete((uri) => {
+    try {
+      const filePath = uri.fsPath.replace(/\\/g, "/");
+      let foundKey = "";
+      for (const k of cachedAnalyses.keys()) {
+        if (k.toLowerCase() === filePath.toLowerCase().replace(/\\/g, "/")) {
+          foundKey = k;
+          break;
+        }
+      }
+      if (foundKey) {
+        cachedAnalyses.delete(foundKey);
+        triggerIncrementalAnalysis();
+      }
+    } catch (err) {
+      output.appendLine(`❌ Error handling file deletion: ${String(err)}`);
+    }
+  });
+
+  context.subscriptions.push(fileWatcher);
+
   // ─────────────────────────────────────────────
   // READY GATE
   // ─────────────────────────────────────────────
 
-  const readyTimer = setTimeout(() => {
+  const readyTimer = setTimeout(async () => {
     isReady = true;
+    await triggerWorkspaceScan();
     for (const doc of vscode.workspace.textDocuments) {
       if (
         SUPPORTED_LANGUAGES.has(doc.languageId) &&

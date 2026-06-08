@@ -33,7 +33,7 @@ function hasMutatingSideEffectsAST(actionNode: any): boolean {
         return true;
       }
 
-      const baseMutationKeywords = ["create", "update", "delete", "insert", "remove", "save", "patch", "upsert", "write", "execute", "replace"];
+      const baseMutationKeywords = ["create", "update", "delete", "insert", "remove", "save", "patch", "upsert", "write", "execute", "replace", "set"];
       const words = splitWords(name);
       if (baseMutationKeywords.some(kw => words.includes(kw))) {
         return true;
